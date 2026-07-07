@@ -87,4 +87,28 @@ export class ManagerDraftsService implements OnModuleInit {
     else list = [] // e.g. no corrections list for L1
     return list
   }
+
+  // Save the (edited) report + move the draft to a new review status.
+  async action(projectId: string, reportHtml: string | undefined, status: string, reason = '') {
+    const p = (projectId ?? '').trim()
+    if (!p || !status) return { ok: false, error: 'Missing project or status.' }
+    if (reportHtml != null) {
+      await this.db.query(
+        `INSERT INTO drafts (project_id, data, review_status, reject_reason)
+         VALUES ($1, jsonb_build_object('reportHtml', $2::text), $3, $4)
+         ON CONFLICT (project_id) DO UPDATE SET
+           data = COALESCE(drafts.data, '{}'::jsonb) || jsonb_build_object('reportHtml', $2::text),
+           review_status = $3, reject_reason = $4, created_at = now()`,
+        [p, reportHtml, status, reason],
+      )
+    } else {
+      await this.db.query(
+        `INSERT INTO drafts (project_id, review_status, reject_reason) VALUES ($1, $2, $3)
+         ON CONFLICT (project_id) DO UPDATE SET review_status = $2, reject_reason = $3`,
+        [p, status, reason],
+      )
+    }
+    await this.notifyAction(p, status)
+    return { ok: true }
+  }
 }
