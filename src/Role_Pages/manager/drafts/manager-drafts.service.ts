@@ -111,4 +111,45 @@ export class ManagerDraftsService implements OnModuleInit {
     await this.notifyAction(p, status)
     return { ok: true }
   }
+
+  // Notify the right people whenever a draft moves through the review chain.
+  private async notifyAction(projectId: string, status: string) {
+    try {
+      const notifyRole = async (role: string, msg: string) => {
+        const r = await this.db.query(`SELECT user_id FROM users WHERE role = $1`, [role])
+        for (const u of r.rows as Row[]) await this.notifications.create(u.user_id as string, msg)
+      }
+      if (status === 'pending_l2') await notifyRole('Manager L2', `Project ${projectId} has been submitted for your L2 check.`)
+      else if (status === 'pending_l1') await notifyRole('Manager L1', `Project ${projectId} has been submitted for your L1 check.`)
+      else if (status === 'rejected_l3') await notifyRole('Manager L3', `Project ${projectId} was sent back to you (L3) for corrections.`)
+      else if (status === 'rejected_l2') await notifyRole('Manager L2', `Project ${projectId} was sent back to you (L2) for corrections.`)
+      else if (status === 'rejected_to_to') {
+        // Send back to the technical officer assigned to this project.
+        const to = (await this.db.query(
+          `SELECT technical_officer_id FROM valuations WHERE project_id = $1 AND technical_officer_id <> '' ORDER BY valuation_id DESC LIMIT 1`,
+          [projectId],
+        )).rows[0]?.technical_officer_id as string | undefined
+        if (to) await this.notifications.create(to, `Project ${projectId} was sent back to you for corrections by Manager L3.`)
+      } else if (status === 'locked') {
+        // Report finalised by L1: move the project forward, notify + email the
+        // applicant (asking for payment), and email the bank.
+        const proj = (await this.db.query(`SELECT applicant_nic, bank_email FROM projects WHERE project_id = $1`, [projectId])).rows[0] as Row
+        await this.db.query(`UPDATE projects SET status = $1 WHERE project_id = $2`, ['Report Created — Pending Payment', projectId])
+        if (proj?.applicant_nic) {
+          await this.notifications.create(
+            proj.applicant_nic,
+            `Your valuation report for project ${projectId} has been created. Please make the payment to view it.`,
+          )
+          const email = (await this.db.query(
+            `SELECT email FROM users WHERE nic = $1 AND role = 'Loan Applicant' LIMIT 1`, [proj.applicant_nic],
+          )).rows[0]?.email as string | undefined
+          if (email) await this.mail.sendReportFinalised(email, projectId, 'applicant')
+        }
+        const bankEmail = (proj?.bank_email as string) ?? ''
+        if (bankEmail) await this.mail.sendReportFinalised(bankEmail, projectId, 'bank')
+      }
+    } catch (err) {
+      this.logger.error(`Review notification failed: ${(err as Error).message}`)
+    }
+  }
 }
