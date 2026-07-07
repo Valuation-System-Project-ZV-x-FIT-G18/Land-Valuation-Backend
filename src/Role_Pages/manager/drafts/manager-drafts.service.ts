@@ -36,4 +36,55 @@ export class ManagerDraftsService implements OnModuleInit {
       this.logger.error(`Manager drafts setup failed: ${(err as Error).message}`)
     }
   }
+
+  // All projects (with valuations + review status). `view` splits the two lists:
+  //  'check'       — drafts newly arrived at this level to review (pending_lX)
+  //  'corrections' — drafts sent BACK to this level to fix (rejected_lX)
+  async projects(level: string, view: 'check' | 'corrections' | 'final' = 'check') {
+    const r = await this.db.query(
+      `SELECT v.project_id, v.valuation_id, v.status, v.technical_officer_id,
+              p.owner_name_as_per_deed, p.village_town, p.district,
+              u.first_name, u.last_name,
+              COALESCE(d.review_status, 'draft') AS review_status, COALESCE(d.reject_reason,'') AS reject_reason
+         FROM valuations v
+         JOIN projects p ON p.project_id = v.project_id
+         LEFT JOIN users u ON u.user_id = p.applicant_nic
+         LEFT JOIN drafts d ON d.project_id = v.project_id
+        ORDER BY v.project_id, v.valuation_id`,
+    )
+
+    const map = new Map<string, Row>()
+    for (const x of r.rows as Row[]) {
+      if (!map.has(x.project_id)) {
+        const owner = `${x.first_name ?? ''} ${x.last_name ?? ''}`.trim() || x.owner_name_as_per_deed || '—'
+        map.set(x.project_id, {
+          projectId: x.project_id,
+          ownerName: owner,
+          location: [x.village_town, x.district].filter(Boolean).join(', '),
+          reviewStatus: x.review_status,
+          rejectReason: x.reject_reason,
+          valuations: [],
+        })
+      }
+      map.get(x.project_id)!.valuations.push({
+        valuationId: Number(x.valuation_id),
+        status: x.status,
+        technicalOfficerId: x.technical_officer_id ?? '',
+      })
+    }
+    // "Check Drafts" = new arrivals to review; "Corrections" = sent back to fix;
+    // "Final" = locked reports (L1 only).
+    const CHECK: Record<string, string> = { L3: 'pending_l3', L2: 'pending_l2', L1: 'pending_l1' }
+    const CORRECTIONS: Record<string, string> = { L3: 'rejected_l3', L2: 'rejected_l2' }
+    const want =
+      view === 'final'
+        ? 'locked'
+        : view === 'corrections'
+          ? CORRECTIONS[level] ?? ''
+          : CHECK[level] ?? ''
+    let list = Array.from(map.values())
+    if (want) list = list.filter((p) => p.reviewStatus === want)
+    else list = [] // e.g. no corrections list for L1
+    return list
+  }
 }
