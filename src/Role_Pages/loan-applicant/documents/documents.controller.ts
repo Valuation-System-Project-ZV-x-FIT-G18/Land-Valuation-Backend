@@ -14,6 +14,7 @@ import { extname, join } from 'path'
 import { existsSync, mkdirSync } from 'fs'
 import type { Response } from 'express'
 import { DocumentsService } from './documents.service'
+import { SetDocumentStatusDto, UploadDocumentDto } from './dto/documents.dto'
 
 const uploadDir = join(process.cwd(), 'uploads')
 if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
@@ -22,7 +23,7 @@ if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 export class DocumentsController {
   constructor(private readonly documents: DocumentsService) {}
 
-  // GET /api/applicant/documents?nic=... — the applicant's uploaded documents.
+  // GET /api/applicant/documents?nic=...
   @Get()
   async list(@Query('nic') nic: string) {
     return { documents: await this.documents.list(nic ?? '') }
@@ -37,25 +38,23 @@ export class DocumentsController {
         filename: (_req, file, cb) =>
           cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
       }),
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   async upload(
-    @Body() body: { nic: string; docType: string },
+    @Body() dto: UploadDocumentDto,
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.documents.upload(body.nic, body.docType, file)
+    return this.documents.upload(dto.nic, dto.docType, file)
   }
 
-  // POST /api/applicant/documents/status — coordinator sets a document's status.
+  // POST /api/applicant/documents/status
   @Post('status')
-  async setStatus(
-    @Body() body: { nic: string; docType: string; status: string; label: string },
-  ) {
-    return this.documents.setStatus(body.nic, body.docType, body.status, body.label)
+  async setStatus(@Body() dto: SetDocumentStatusDto) {
+    return this.documents.setStatus(dto.nic, dto.docType, dto.status, dto.label ?? '')
   }
 
-  // GET /api/applicant/documents/file?nic=&docType= — download a document.
+  // GET /api/applicant/documents/file?nic=&docType=
   @Get('file')
   async file(
     @Query('nic') nic: string,
@@ -63,10 +62,7 @@ export class DocumentsController {
     @Res() res: Response,
   ) {
     const f = await this.documents.attachment(nic ?? '', docType ?? '')
-    if (!f) {
-      res.status(404).json({ error: 'File not found.' })
-      return
-    }
+    if (!f) { res.status(404).json({ error: 'File not found.' }); return }
     res.download(join(uploadDir, f.filePath), f.fileName)
   }
 }

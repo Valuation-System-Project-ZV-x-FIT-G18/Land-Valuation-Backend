@@ -1,8 +1,7 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common'
 import { MappingService } from './mapping.service'
+import { GenerateAccessDto, SaveMappingDto } from './dto/mapping.dto'
 
-// Technical Officer — "GPS & Map Integration": choose the property location on a
-// map, view satellite/map imagery, and generate an AI access-route description.
 @Controller('technical-officer/mapping')
 export class MappingController {
   constructor(private readonly mapping: MappingService) {}
@@ -14,13 +13,13 @@ export class MappingController {
   }
 
   @Post('access')
-  async access(@Body() body: { projectId: string; lat: number; lng: number }) {
-    return this.mapping.generateAccess(String(body.projectId ?? ''), Number(body.lat), Number(body.lng))
+  async access(@Body() dto: GenerateAccessDto) {
+    return this.mapping.generateAccess(dto.projectId, dto.lat, dto.lng)
   }
 
   @Post('locality')
-  async locality(@Body() body: { projectId: string; lat: number; lng: number }) {
-    return this.mapping.generateLocality(String(body.projectId ?? ''), Number(body.lat), Number(body.lng))
+  async locality(@Body() dto: GenerateAccessDto) {
+    return this.mapping.generateLocality(dto.projectId, dto.lat, dto.lng)
   }
 
   @Get()
@@ -29,26 +28,11 @@ export class MappingController {
   }
 
   @Post()
-  async save(
-    @Body()
-    body: {
-      projectId: string
-      lat: number
-      lng: number
-      accessDescription: string
-      localityDescription: string
-      accessSources?: string[]
-      localitySources?: string[]
-    },
-  ) {
+  async save(@Body() dto: SaveMappingDto) {
     return this.mapping.save(
-      String(body.projectId ?? ''),
-      Number(body.lat),
-      Number(body.lng),
-      body.accessDescription ?? '',
-      body.localityDescription ?? '',
-      body.accessSources ?? [],
-      body.localitySources ?? [],
+      dto.projectId, dto.lat, dto.lng,
+      dto.accessDescription, dto.localityDescription,
+      dto.accessSources ?? [], dto.localitySources ?? [],
     )
   }
 }

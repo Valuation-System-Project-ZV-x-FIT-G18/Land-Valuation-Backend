@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common'
 import { ManagerDraftsService } from './manager-drafts.service'
+import { DraftActionDto } from './dto/action.dto'
 
-// Manager — "Check Drafts": review workflow across L3 → L2 → L1.
 @Controller('manager/drafts')
 export class ManagerDraftsController {
   constructor(private readonly service: ManagerDraftsService) {}
@@ -13,11 +13,9 @@ export class ManagerDraftsController {
     return { projects: await this.service.projects(level ?? 'L3', v) }
   }
 
-  // POST /api/manager/drafts/action — save the report + change review status.
+  // POST /api/manager/drafts/action
   @Post('action')
-  async action(
-    @Body() body: { projectId: string; reportHtml?: string; status: string; reason?: string },
-  ) {
-    return this.service.action(String(body.projectId ?? ''), body.reportHtml, String(body.status ?? ''), body.reason ?? '')
+  async action(@Body() dto: DraftActionDto) {
+    return this.service.action(dto.projectId, dto.reportHtml, dto.status, dto.reason ?? '')
   }
 }

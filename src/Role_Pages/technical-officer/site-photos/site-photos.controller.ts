@@ -14,6 +14,7 @@ import { extname, join } from 'path'
 import { existsSync, mkdirSync } from 'fs'
 import type { Response } from 'express'
 import { SitePhotosService } from './site-photos.service'
+import { UploadSitePhotoDto } from './dto/upload-photo.dto'
 
 const uploadDir = join(process.cwd(), 'uploads')
 if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
@@ -28,7 +29,7 @@ export class SitePhotosController {
     return { photos: await this.photos.list(projectId ?? '') }
   }
 
-  // POST /api/technical-officer/site-photos — { projectId, toId, photoType } + file
+  // POST /api/technical-officer/site-photos
   @Post()
   @UseInterceptors(
     FileInterceptor('file', {
@@ -41,20 +42,16 @@ export class SitePhotosController {
     }),
   )
   async upload(
-    @Body() body: { projectId: string; toId: string; photoType: string; describe?: string; photoLabel?: string },
+    @Body() dto: UploadSitePhotoDto,
     @UploadedFile() file?: Express.Multer.File,
   ) {
     return this.photos.upload(
-      body.projectId,
-      body.toId,
-      body.photoType,
-      file,
-      body.describe === 'true',
-      body.photoLabel ?? '',
+      dto.projectId, dto.toId, dto.photoType,
+      file, dto.describe === 'true', dto.photoLabel ?? '',
     )
   }
 
-  // GET /api/technical-officer/site-photos/file?projectId=&photoType= — view/download.
+  // GET /api/technical-officer/site-photos/file?projectId=&photoType=
   @Get('file')
   async file(
     @Query('projectId') projectId: string,
@@ -62,10 +59,7 @@ export class SitePhotosController {
     @Res() res: Response,
   ) {
     const f = await this.photos.attachment(projectId ?? '', photoType ?? '')
-    if (!f) {
-      res.status(404).json({ error: 'Photo not found.' })
-      return
-    }
-    res.sendFile(join(uploadDir, f.filePath)) // inline so <img> can display it
+    if (!f) { res.status(404).json({ error: 'Photo not found.' }); return }
+    res.sendFile(join(uploadDir, f.filePath))
   }
 }

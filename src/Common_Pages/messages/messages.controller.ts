@@ -14,6 +14,7 @@ import { extname, join } from 'path'
 import { existsSync, mkdirSync } from 'fs'
 import type { Response } from 'express'
 import { MessagesService } from './messages.service'
+import { SendMessageDto } from './dto/send-message.dto'
 
 const uploadDir = join(process.cwd(), 'uploads')
 if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
@@ -22,25 +23,25 @@ if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 export class MessagesController {
   constructor(private readonly messages: MessagesService) {}
 
-  // GET /api/messages/users?role=Coordinator — recipients of a role.
+  // GET /api/messages/users?role=Coordinator
   @Get('users')
   async users(@Query('role') role: string) {
     return { users: await this.messages.listUsersByRole(role ?? '') }
   }
 
-  // GET /api/messages/threads?userId=... — the viewer's conversations.
+  // GET /api/messages/threads?userId=...
   @Get('threads')
   async threads(@Query('userId') userId: string) {
     return { threads: await this.messages.threads(userId ?? '') }
   }
 
-  // GET /api/messages/conversation?userId=...&otherId=... — one chat thread.
+  // GET /api/messages/conversation?userId=...&otherId=...
   @Get('conversation')
   async conversation(@Query('userId') userId: string, @Query('otherId') otherId: string) {
     return { messages: await this.messages.conversation(userId ?? '', otherId ?? '') }
   }
 
-  // POST /api/messages — send { senderId, recipientId, body } with an optional file.
+  // POST /api/messages — send a message with an optional file.
   @Post()
   @UseInterceptors(
     FileInterceptor('file', {
@@ -49,17 +50,17 @@ export class MessagesController {
         filename: (_req, file, cb) =>
           cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
       }),
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   async send(
-    @Body() body: { senderId: string; recipientId: string; body: string },
+    @Body() dto: SendMessageDto,
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.messages.send(body.senderId, body.recipientId, body.body, file)
+    return this.messages.send(dto.senderId, dto.recipientId, dto.body ?? '', file)
   }
 
-  // GET /api/messages/attachment?id=..&userId=.. — download a message's file.
+  // GET /api/messages/attachment?id=..&userId=..
   @Get('attachment')
   async attachment(
     @Query('id') id: string,
@@ -67,10 +68,7 @@ export class MessagesController {
     @Res() res: Response,
   ) {
     const file = await this.messages.attachment(id ?? '', userId ?? '')
-    if (!file) {
-      res.status(404).json({ error: 'File not found.' })
-      return
-    }
+    if (!file) { res.status(404).json({ error: 'File not found.' }); return }
     res.download(join(uploadDir, file.filePath), file.fileName)
   }
 }

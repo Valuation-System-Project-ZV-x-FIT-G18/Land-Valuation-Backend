@@ -1,24 +1,20 @@
-import { IsEmail, IsOptional, IsString, Matches, MinLength } from 'class-validator'
+import { IsEmail, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator'
 
-// Body of POST /api/coordinator/banks — registering a bank branch/officer.
 export class CreateBankDto {
-  @IsString() @MinLength(2, { message: 'Choose a bank.' }) bankName: string
+  @IsString() @MinLength(2, { message: 'Choose a bank.' }) @MaxLength(100) bankName: string
+  @IsOptional() @IsString() @MaxLength(100) branchName?: string
+  @IsString() @MinLength(1, { message: 'Branch code is required.' }) @MaxLength(20) branchCode: string
+  @IsString() @MinLength(2, { message: "Officer's name is required." }) @MaxLength(100) officerName: string
 
-  @IsOptional() @IsString() branchName?: string
+  @Matches(/^(\d{9}[VvXx]|\d{12})$/, { message: 'Enter a valid NIC.' }) officerNic: string
 
-  @IsString() @MinLength(1, { message: 'Branch code is required.' }) branchCode: string
+  @Matches(/^(07\d{8}|0[1-9]\d{7,8}|[1-9]\d{8,9})$/, {
+    message: 'Enter a valid contact number.',
+  })
+  contact: string
 
-  @IsString() @MinLength(2, { message: "Officer's name is required." }) officerName: string
+  @IsString() @MinLength(1, { message: 'Enter the applicant NIC or Project ID.' }) @MaxLength(20) projectRef: string
 
-  @Matches(/^(\d{9}[VvXx]|\d{12})$/, { message: 'Enter a valid NIC.' })
-  officerNic: string
-
-  @IsString() @MinLength(1, { message: 'Contact number is required.' }) contact: string
-
-  // Links this bank request to a project — the applicant's NIC or a Project ID.
-  @IsString() @MinLength(1, { message: 'Enter the applicant NIC or Project ID.' })
-  projectRef: string
-
-  @IsOptional() @IsEmail({}, { message: 'Enter a valid email.' }) email?: string
-  @IsOptional() @IsString() address?: string
+  @IsOptional() @IsEmail({}, { message: 'Enter a valid email.' }) @MaxLength(100) email?: string
+  @IsOptional() @IsString() @MaxLength(255) address?: string
 }

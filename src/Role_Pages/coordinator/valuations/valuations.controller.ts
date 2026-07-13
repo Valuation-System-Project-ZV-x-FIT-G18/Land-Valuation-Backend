@@ -14,6 +14,8 @@ import { extname, join } from 'path'
 import { existsSync, mkdirSync } from 'fs'
 import type { Response } from 'express'
 import { ValuationsService } from './valuations.service'
+import { CreateValuationRequestDto } from './dto/create-valuation-request.dto'
+import { AssignOfficerDto } from './dto/assign-officer.dto'
 
 const uploadDir = join(process.cwd(), 'uploads')
 if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
@@ -29,19 +31,16 @@ export class ValuationsController {
       storage: diskStorage({
         destination: uploadDir,
         filename: (_req, file, cb) =>
-          cb(
-            null,
-            `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`,
-          ),
+          cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
       }),
-      limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+      limits: { fileSize: 5 * 1024 * 1024 },
     }),
   )
   async create(
-    @Body() body: Record<string, string>,
+    @Body() dto: CreateValuationRequestDto,
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    const { rowId, valuationId } = await this.valuations.create(body, file)
+    const { rowId, valuationId } = await this.valuations.create(dto, file)
     return { ok: true, rowId, valuationId }
   }
 
@@ -59,21 +58,18 @@ export class ValuationsController {
     return { valuations }
   }
 
-  // GET /api/coordinator/valuations/details?id=<row id> — all saved fields.
+  // GET /api/coordinator/valuations/details?id=<row id>
   @Get('details')
   async details(@Query('id') id: string) {
     const details = await this.valuations.details(id ?? '')
     return details ?? { error: 'Valuation not found.' }
   }
 
-  // GET /api/coordinator/valuations/file?id=<row id> — the bank's request letter.
+  // GET /api/coordinator/valuations/file?id=<row id>
   @Get('file')
   async file(@Query('id') id: string, @Res() res: Response) {
     const path = await this.valuations.requestLetterPath(id ?? '')
-    if (!path) {
-      res.status(404).json({ error: 'File not found.' })
-      return
-    }
+    if (!path) { res.status(404).json({ error: 'File not found.' }); return }
     res.sendFile(join(uploadDir, path))
   }
 
@@ -91,7 +87,7 @@ export class ValuationsController {
     return res ?? { error: 'Valuation not found.' }
   }
 
-  // GET /api/coordinator/valuations/project-timeline?projectId=... (no valuation needed)
+  // GET /api/coordinator/valuations/project-timeline?projectId=...
   @Get('project-timeline')
   async projectTimeline(@Query('projectId') projectId: string) {
     const res = await this.valuations.projectTimeline(projectId ?? '')
@@ -107,10 +103,7 @@ export class ValuationsController {
 
   // POST /api/coordinator/valuations/assign  { rowId, technicalOfficerId }
   @Post('assign')
-  async assign(@Body() body: { rowId: string; technicalOfficerId: string }) {
-    return this.valuations.assignTechnicalOfficer(
-      String(body.rowId ?? ''),
-      String(body.technicalOfficerId ?? ''),
-    )
+  async assign(@Body() dto: AssignOfficerDto) {
+    return this.valuations.assignTechnicalOfficer(dto.rowId, dto.technicalOfficerId)
   }
 }

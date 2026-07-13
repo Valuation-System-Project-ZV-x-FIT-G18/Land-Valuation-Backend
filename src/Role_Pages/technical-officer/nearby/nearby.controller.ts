@@ -1,8 +1,7 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common'
 import { NearbyService, AnalyseInput } from './nearby.service'
+import { AnalyseDto, SaveAnalysisDto } from './dto/nearby.dto'
 
-// Technical Officer — "Analyse Nearby Lands": location, comparable evidence
-// (from property portals via AI), and the valuation report sections (9–13).
 @Controller('technical-officer/nearby')
 export class NearbyController {
   constructor(private readonly nearby: NearbyService) {}
@@ -19,8 +18,8 @@ export class NearbyController {
   }
 
   @Post('analyse')
-  async analyse(@Body() body: { projectId: string; input: AnalyseInput }) {
-    return this.nearby.analyse(String(body.projectId ?? ''), body.input ?? {})
+  async analyse(@Body() dto: AnalyseDto) {
+    return this.nearby.analyse(dto.projectId, dto.input as AnalyseInput)
   }
 
   @Get()
@@ -29,7 +28,7 @@ export class NearbyController {
   }
 
   @Post()
-  async save(@Body() body: { projectId: string; data: Record<string, unknown> }) {
-    return this.nearby.saveAnalysis(String(body.projectId ?? ''), body.data ?? {})
+  async save(@Body() dto: SaveAnalysisDto) {
+    return this.nearby.saveAnalysis(dto.projectId, dto.data)
   }
 }

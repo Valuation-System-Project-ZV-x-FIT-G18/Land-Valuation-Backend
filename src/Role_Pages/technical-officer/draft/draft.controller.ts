@@ -1,34 +1,33 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common'
 import { DraftService } from './draft.service'
+import { SaveDraftDto } from './dto/save-draft.dto'
 
-// Technical Officer — "Create Draft": assemble, edit and save the valuation
-// report draft for a project.
 @Controller('technical-officer/draft')
 export class DraftController {
   constructor(private readonly draft: DraftService) {}
 
-  // GET /fill?projectId=... — the template with every #N token filled in.
+  // GET /fill?projectId=...
   @Get('fill')
   async fill(@Query('projectId') projectId: string) {
     return this.draft.fill(projectId ?? '')
   }
 
-  // GET /build?projectId=... — the raw mapped field values (debug / reuse).
+  // GET /build?projectId=...
   @Get('build')
   async build(@Query('projectId') projectId: string) {
     const res = await this.draft.buildValues(projectId ?? '')
     return res ?? { error: 'Project not found.' }
   }
 
-  // GET ?projectId=... — the previously saved draft (or null).
+  // GET ?projectId=...
   @Get()
   async get(@Query('projectId') projectId: string) {
     return { data: await this.draft.get(projectId ?? '') }
   }
 
-  // POST { projectId, data } — save the edited draft.
+  // POST { projectId, data }
   @Post()
-  async save(@Body() body: { projectId: string; data: Record<string, string> }) {
-    return this.draft.save(String(body.projectId ?? ''), body.data ?? {})
+  async save(@Body() dto: SaveDraftDto) {
+    return this.draft.save(dto.projectId, dto.data)
   }
 }

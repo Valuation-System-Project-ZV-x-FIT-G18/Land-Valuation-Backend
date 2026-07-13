@@ -4,7 +4,7 @@ import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 import { projectFieldColumns } from './constants/project-fields'
 
-type Body = Record<string, string>
+type Body = { applicantNic?: string; coordinatorId?: string; data?: string }
 type Files = Record<string, Express.Multer.File[]>
 
 // Creates a land valuation project. Every form field is stored in its own column

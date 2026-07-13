@@ -12,6 +12,7 @@ import { diskStorage } from 'multer'
 import { extname, join } from 'path'
 import { existsSync, mkdirSync } from 'fs'
 import { InspectionsService } from './inspections.service'
+import { SaveInspectionDto } from './dto/save-inspection.dto'
 
 const uploadDir = join(process.cwd(), 'uploads')
 if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
@@ -20,8 +21,7 @@ if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 export class InspectionsController {
   constructor(private readonly inspections: InspectionsService) {}
 
-  // POST /api/technical-officer/inspections/ocr — upload the handwritten form,
-  // returns OCR-extracted draft fields (does NOT save).
+  // POST /api/technical-officer/inspections/ocr — upload handwritten form, returns OCR fields.
   @Post('ocr')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -38,17 +38,15 @@ export class InspectionsController {
     return this.inspections.ocr(file.filename, file.originalname)
   }
 
-  // GET /api/technical-officer/inspections?projectId=... — existing draft/data.
+  // GET /api/technical-officer/inspections?projectId=...
   @Get()
   async get(@Query('projectId') projectId: string) {
     return { data: await this.inspections.get(projectId ?? '') }
   }
 
-  // POST /api/technical-officer/inspections — save the edited inspection.
+  // POST /api/technical-officer/inspections
   @Post()
-  async save(
-    @Body() body: { projectId: string; toId: string; data: Record<string, string> },
-  ) {
-    return this.inspections.save(body.projectId, body.toId, body.data)
+  async save(@Body() dto: SaveInspectionDto) {
+    return this.inspections.save(dto.projectId, dto.toId, dto.data)
   }
 }

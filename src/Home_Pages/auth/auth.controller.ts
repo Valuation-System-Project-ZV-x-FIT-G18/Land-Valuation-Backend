@@ -4,6 +4,7 @@ import { UsersService } from './users.service'
 import { LoginDto } from './dto/login.dto'
 import { ChangePasswordDto } from './dto/change-password.dto'
 import { UpdateProfileDto } from './dto/update-profile.dto'
+import { ForgotPasswordDto } from './dto/forgot-password.dto'
 
 @Controller('auth')
 export class AuthController {
@@ -21,8 +22,8 @@ export class AuthController {
 
   // POST /api/auth/forgot-password  { identifier }  (login ID / email / NIC)
   @Post('forgot-password')
-  async forgotPassword(@Body() body: { identifier: string }) {
-    return this.authService.forgotPassword(String(body.identifier ?? ''))
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto.identifier)
   }
 
   // POST /api/auth/change-password

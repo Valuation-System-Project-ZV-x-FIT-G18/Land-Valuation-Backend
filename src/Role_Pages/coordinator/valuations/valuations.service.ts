@@ -74,7 +74,7 @@ export class ValuationsService implements OnModuleInit {
     }
   }
 
-  async create(body: Record<string, string>, file?: Express.Multer.File) {
+  async create(body: { projectId?: string; applicantNic?: string; data?: string }, file?: Express.Multer.File) {
     const projectId = (body.projectId ?? '').trim()
     // valuation_id = (highest number this project already has) + 1.
     const result = await this.db.query(

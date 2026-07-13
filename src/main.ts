@@ -11,7 +11,7 @@ async function bootstrap() {
 
   // Validate every incoming request body against its DTO automatically.
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, transform: true }),
+    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   )
 
   const port = process.env.PORT ?? 4000
