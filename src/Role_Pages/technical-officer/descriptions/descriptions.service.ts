@@ -407,8 +407,13 @@ export class DescriptionsService implements OnModuleInit {
     const landValue = Math.round(totalPerches * rate)
     const buildingValue = 0
     const marketValue = landValue + buildingValue
-    const say = marketValue >= 1_000_000 ? Math.round(marketValue / 1_000_000) * 1_000_000 : marketValue
-    const propertyType = String(details.propertyType || 'residential').toLowerCase()
+    // Round the adopted ("Say") value to the nearest Rs 100,000 — the customary
+    // valuer rounding. Rounding to the nearest million would drop up to ~5% of
+    // the value, which no valuer would do.
+    const say = marketValue >= 100_000 ? Math.round(marketValue / 100_000) * 100_000 : marketValue
+    // Strip a trailing "land" so a property type like "bare residential land"
+    // doesn't read "…bare residential land land values…".
+    const propertyType = String(details.propertyType || 'residential').toLowerCase().replace(/\s*land$/i, '')
     return {
       extentText,
       totalPerches,

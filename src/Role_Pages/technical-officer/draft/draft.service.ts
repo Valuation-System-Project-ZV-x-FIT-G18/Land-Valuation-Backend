@@ -168,7 +168,7 @@ export class DraftService implements OnModuleInit {
       mandatoryRequirements: desc.mandatoryRequirements ?? '',
       localityFacilities: desc.localityFacilities ?? '',
       nearbyPropertyDetails: la.evidence?.marketSurveyStatement ?? '',
-      previouslyValued: (la.basis?.previouslyValued ?? 'not valued').includes('previously') ? 'valuated' : 'not valuated',
+      previouslyValued: (la.basis?.previouslyValued ?? 'not valued').includes('previously') ? 'valued' : 'not valued',
       valuationText:
         calc.ratePerPerch
           ? `${calc.totalExtentPerches ?? ''} Perches @ Rs. ${Number(calc.ratePerPerch).toLocaleString('en-US')}/- per perch = Rs. ${Number(calc.marketValue ?? 0).toLocaleString('en-US')}/-.`
