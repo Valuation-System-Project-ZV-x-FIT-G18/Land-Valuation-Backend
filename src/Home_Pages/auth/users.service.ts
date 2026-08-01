@@ -9,6 +9,7 @@ export type User = {
   role: string
   password_hash: string
   must_change_password: boolean
+  photo_path: string
 }
 
 // Reads/writes the "users" table (staff + loan applicants).
@@ -24,8 +25,11 @@ export class UsersService implements OnModuleInit {
       await this.db.query(
         `ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false`,
       )
+      await this.db.query(
+        `ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_path VARCHAR(255) NOT NULL DEFAULT ''`,
+      )
     } catch (err) {
-      this.logger.error(`Could not ensure must_change_password: ${(err as Error).message}`)
+      this.logger.error(`Could not ensure profile columns: ${(err as Error).message}`)
     }
   }
 
@@ -66,7 +70,7 @@ export class UsersService implements OnModuleInit {
     const r = await this.db.query(
       `SELECT user_id, role, nic, first_name, last_name, initials, email, phone,
               to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth,
-              province, district, city, postal_code, address
+              province, district, city, postal_code, address, photo_path
          FROM users WHERE user_id = $1`,
       [userId],
     )
@@ -87,7 +91,19 @@ export class UsersService implements OnModuleInit {
       city: u.city as string,
       postalCode: u.postal_code as string,
       address: u.address as string,
+      photoPath: (u.photo_path as string) ?? '',
     }
+  }
+
+  // Save the file name of a newly-uploaded profile picture.
+  async setPhoto(userId: string, fileName: string) {
+    await this.db.query(`UPDATE users SET photo_path = $1 WHERE user_id = $2`, [fileName, userId])
+  }
+
+  // The stored file name for a user's profile picture (for serving it back).
+  async getPhotoPath(userId: string): Promise<string> {
+    const r = await this.db.query(`SELECT photo_path FROM users WHERE user_id = $1`, [userId])
+    return (r.rows[0]?.photo_path as string) ?? ''
   }
 
   // Update the user's personal fields. Identity fields (user_id, role, nic) and

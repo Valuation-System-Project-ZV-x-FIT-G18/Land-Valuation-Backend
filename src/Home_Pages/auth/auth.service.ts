@@ -25,6 +25,7 @@ export class AuthService {
       name: `${user.first_name} ${user.last_name}`,
       role: user.role,
       mustChangePassword: user.must_change_password,
+      photoPath: (user as { photo_path?: string }).photo_path ?? '',
     }
   }
 
@@ -56,6 +57,7 @@ export class AuthService {
       name: `${user.first_name} ${user.last_name}`,
       role: user.role,
       mustChangePassword: false,
+      photoPath: user.photo_path ?? '',
     }
   }
 }

@@ -62,4 +62,23 @@ export class NotificationsService implements OnModuleInit {
       [userId],
     )
   }
+
+  // Resolve a requesting bank's login (its user_id is the branch code) from an
+  // email address, e.g. the `bank_email` stored on a project. Used so a project
+  // milestone can also notify the bank in-system, not just by email. Returns
+  // null when the address isn't tied to a registered Bank login.
+  async resolveBankUserId(email: string): Promise<string | null> {
+    const e = (email ?? '').trim()
+    if (!e) return null
+    try {
+      const r = await this.db.query(
+        `SELECT user_id FROM users WHERE role = 'Bank' AND email = $1 LIMIT 1`,
+        [e],
+      )
+      return (r.rows[0]?.user_id as string) ?? null
+    } catch (err) {
+      this.logger.error(`Could not resolve bank login: ${(err as Error).message}`)
+      return null
+    }
+  }
 }

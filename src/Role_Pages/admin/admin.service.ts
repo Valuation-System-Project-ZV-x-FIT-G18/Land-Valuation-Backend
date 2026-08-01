@@ -3,6 +3,7 @@ import * as bcrypt from 'bcryptjs'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
 import { CreateRoleDto } from './dto/create-role.dto'
+import { UpdateUserDto } from './dto/update-user.dto'
 
 // Login-ID prefix for each staff role (matches the internal login page).
 const PREFIX: Record<string, string> = {
@@ -99,5 +100,50 @@ export class AdminService implements OnModuleInit {
     await this.mail.sendStaffWelcome(dto.email.trim(), userId, dto.password, dto.role)
 
     return { userId }
+  }
+
+  // Every registered account, for the Admin > User Details page.
+  async listUsers() {
+    const r = await this.db.query(
+      `SELECT user_id, first_name, last_name, role, email, phone, nic,
+              province, district, city, photo_path
+         FROM users ORDER BY role, user_id`,
+    )
+    return r.rows.map((u) => ({
+      userId: u.user_id as string,
+      name: `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim(),
+      role: u.role as string,
+      email: (u.email as string) ?? '',
+      phone: (u.phone as string) ?? '',
+      nic: (u.nic as string) ?? '',
+      province: (u.province as string) ?? '',
+      district: (u.district as string) ?? '',
+      city: (u.city as string) ?? '',
+      photoPath: (u.photo_path as string) ?? '',
+    }))
+  }
+
+  // Edit a user's basic details (identity fields stay fixed).
+  async updateUser(userId: string, dto: UpdateUserDto) {
+    await this.db.query(
+      `UPDATE users SET first_name = $2, last_name = $3, email = $4, phone = $5,
+              province = $6, district = $7, city = $8
+        WHERE user_id = $1`,
+      [
+        userId,
+        dto.firstName.trim(),
+        (dto.lastName ?? '').trim(),
+        (dto.email ?? '').trim(),
+        (dto.phone ?? '').trim(),
+        (dto.province ?? '').trim(),
+        (dto.district ?? '').trim(),
+        (dto.city ?? '').trim(),
+      ],
+    )
+  }
+
+  // Remove a user's account entirely.
+  async deleteUser(userId: string) {
+    await this.db.query(`DELETE FROM users WHERE user_id = $1`, [userId])
   }
 }

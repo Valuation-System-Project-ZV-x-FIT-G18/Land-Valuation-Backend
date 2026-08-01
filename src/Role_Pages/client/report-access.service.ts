@@ -69,7 +69,7 @@ export class ReportAccessService implements OnModuleInit {
       // Loan applicant — in-system + email.
       const nic = (proj?.applicant_nic as string) ?? ''
       if (nic) {
-        await this.notifications.create(nic, `Payment received for project ${projectId}. Your valuation is complete and the report is now available to your bank.`)
+        await this.notifications.create(nic, `Payment for project ${projectId} has been confirmed. Your valuation is now complete, and the finalised report has been shared with your bank.`)
         const email = (await this.db.query(
           `SELECT email FROM users WHERE nic = $1 AND role = 'Loan Applicant' LIMIT 1`, [nic],
         )).rows[0]?.email as string | undefined
@@ -82,7 +82,7 @@ export class ReportAccessService implements OnModuleInit {
         [projectId],
       )).rows[0]?.code as string | undefined
       if (bankCode) {
-        await this.notifications.create(bankCode, `Payment received for project ${projectId}. The finalised valuation report is now available to view.`)
+        await this.notifications.create(bankCode, `Payment for project ${projectId} has been confirmed. The finalised valuation report is now available for you to view.`)
         const bankEmail = (proj?.bank_email as string) ||
           ((await this.db.query(`SELECT email FROM users WHERE user_id = $1 LIMIT 1`, [bankCode])).rows[0]?.email as string | undefined) || ''
         if (bankEmail) await this.mail.sendPaymentReceived(bankEmail, projectId, 'bank')
@@ -190,7 +190,32 @@ export class ReportAccessService implements OnModuleInit {
       [p, slipFilename],
     )
     if (r.rowCount === 0) return { ok: false, error: 'Report is not available for payment yet.' }
+    await this.notifySlipSubmitted(p)
     return { ok: true }
+  }
+
+  // Notify the coordinators that a payment slip is awaiting verification, and
+  // reassure the applicant it was received. Never throws.
+  private async notifySlipSubmitted(projectId: string) {
+    try {
+      const r = await this.db.query(`SELECT user_id FROM users WHERE role = 'Coordinator'`)
+      for (const u of r.rows as Row[]) {
+        await this.notifications.create(
+          u.user_id as string,
+          `A payment slip for project ${projectId} has been submitted and is awaiting your verification.`,
+        )
+      }
+      const nic = (await this.db.query(`SELECT applicant_nic FROM projects WHERE project_id = $1`, [projectId]))
+        .rows[0]?.applicant_nic as string | undefined
+      if (nic) {
+        await this.notifications.create(
+          nic,
+          `We have received your payment slip for project ${projectId}. It is currently being verified, and you will be notified once it is confirmed.`,
+        )
+      }
+    } catch (err) {
+      this.logger.error(`Slip submission notification failed: ${(err as Error).message}`)
+    }
   }
 
   // Slips awaiting a coordinator's verification.

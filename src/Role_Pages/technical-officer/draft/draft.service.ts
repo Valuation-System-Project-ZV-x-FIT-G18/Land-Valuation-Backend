@@ -238,20 +238,33 @@ export class DraftService implements OnModuleInit {
     return { ok: true }
   }
 
-  // On first submission: notify the L3 managers, and email + notify the applicant.
+  // On first submission: notify the L3 managers, and email + notify the
+  // applicant and the requesting bank.
   private async notifyOnSubmit(projectId: string) {
     try {
-      const nic = (await this.db.query(`SELECT applicant_nic FROM projects WHERE project_id = $1`, [projectId]))
-        .rows[0]?.applicant_nic as string | undefined
+      const proj = (await this.db.query(`SELECT applicant_nic, bank_email FROM projects WHERE project_id = $1`, [projectId])).rows[0] as
+        | { applicant_nic?: string; bank_email?: string }
+        | undefined
+      const nic = proj?.applicant_nic
       if (nic) {
         await this.notifications.create(
           nic,
-          `Your valuation report for project ${projectId} has been prepared and is now under review (L3 check).`,
+          `Your valuation report for project ${projectId} has been prepared and has entered our internal review process.`,
         )
         const email = (await this.db.query(
           `SELECT email FROM users WHERE nic = $1 AND role = 'Loan Applicant' LIMIT 1`, [nic],
         )).rows[0]?.email as string | undefined
         if (email) await this.mail.sendDraftUnderReview(email, projectId)
+      }
+      const bankEmail = proj?.bank_email ?? ''
+      if (bankEmail) {
+        const bankUserId = await this.notifications.resolveBankUserId(bankEmail)
+        if (bankUserId) {
+          await this.notifications.create(
+            bankUserId,
+            `The valuation report for project ${projectId} has been prepared and has entered our internal review process.`,
+          )
+        }
       }
       const l3 = await this.db.query(`SELECT user_id FROM users WHERE role = 'Manager L3'`)
       for (const m of l3.rows as Row[]) {

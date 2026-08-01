@@ -185,6 +185,23 @@ export class NearbyService implements OnModuleInit {
 
     const extent = loc.extentPerches
     const rate = Number(input.ratePerPerch) || avg
+    // Guard against silently generating a "Rs. 0" valuation (Sections 9, 11,
+    // 12 & 13 all derive from `extent` and `rate` — if either is zero, every
+    // figure in those sections comes out zero too).
+    if (extent <= 0) {
+      return {
+        error:
+          'This project has no recorded land extent (Section 8 — Land Extent, in Create Project). ' +
+          'Please have the coordinator update it before the valuation can be calculated.',
+      }
+    }
+    if (rate <= 0) {
+      return {
+        error:
+          'Enter a price per perch for at least one comparable, or set the adopted rate manually, ' +
+          'before generating the valuation sections — none of the comparables have a value yet.',
+      }
+    }
     const marketValue = Math.round(extent * rate)
     const pct = Number(input.forcedSalePct) || 80
     const forcedSaleValue = Math.round((marketValue * pct) / 100)

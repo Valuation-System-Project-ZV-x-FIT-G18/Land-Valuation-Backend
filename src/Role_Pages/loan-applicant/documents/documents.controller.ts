@@ -23,10 +23,10 @@ if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 export class DocumentsController {
   constructor(private readonly documents: DocumentsService) {}
 
-  // GET /api/applicant/documents?nic=...
+  // GET /api/applicant/documents?nic=&projectId=
   @Get()
-  async list(@Query('nic') nic: string) {
-    return { documents: await this.documents.list(nic ?? '') }
+  async list(@Query('nic') nic: string, @Query('projectId') projectId: string) {
+    return { documents: await this.documents.list(nic ?? '', projectId ?? '') }
   }
 
   // POST /api/applicant/documents — upload { nic, docType } + file.
@@ -45,23 +45,24 @@ export class DocumentsController {
     @Body() dto: UploadDocumentDto,
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.documents.upload(dto.nic, dto.docType, file)
+    return this.documents.upload(dto.nic, dto.projectId, dto.docType, file)
   }
 
   // POST /api/applicant/documents/status
   @Post('status')
   async setStatus(@Body() dto: SetDocumentStatusDto) {
-    return this.documents.setStatus(dto.nic, dto.docType, dto.status, dto.label ?? '')
+    return this.documents.setStatus(dto.nic, dto.projectId, dto.docType, dto.status, dto.label ?? '')
   }
 
-  // GET /api/applicant/documents/file?nic=&docType=
+  // GET /api/applicant/documents/file?nic=&projectId=&docType=
   @Get('file')
   async file(
     @Query('nic') nic: string,
+    @Query('projectId') projectId: string,
     @Query('docType') docType: string,
     @Res() res: Response,
   ) {
-    const f = await this.documents.attachment(nic ?? '', docType ?? '')
+    const f = await this.documents.attachment(nic ?? '', projectId ?? '', docType ?? '')
     if (!f) { res.status(404).json({ error: 'File not found.' }); return }
     res.download(join(uploadDir, f.filePath), f.fileName)
   }

@@ -37,10 +37,13 @@ export class ManagerDraftsService implements OnModuleInit {
     }
   }
 
-  // All projects (with valuations + review status). `view` splits the two lists:
+  // All projects (with valuations + review status). `view` splits the lists:
   //  'check'       — drafts newly arrived at this level to review (pending_lX)
   //  'corrections' — drafts sent BACK to this level to fix (rejected_lX)
-  async projects(level: string, view: 'check' | 'corrections' | 'final' = 'check') {
+  //  'final'       — locked reports (L1 only)
+  //  'approved'    — drafts this level has approved and passed further up (L2/L3)
+  //  'rejected'    — drafts this level has rejected further down (L2/L3)
+  async projects(level: string, view: 'check' | 'corrections' | 'final' | 'approved' | 'rejected' = 'check') {
     const r = await this.db.query(
       `SELECT v.project_id, v.valuation_id, v.status, v.technical_officer_id,
               p.owner_name_as_per_deed, p.village_town, p.district,
@@ -50,7 +53,7 @@ export class ManagerDraftsService implements OnModuleInit {
          JOIN projects p ON p.project_id = v.project_id
          LEFT JOIN users u ON u.user_id = p.applicant_nic
          LEFT JOIN drafts d ON d.project_id = v.project_id
-        ORDER BY v.project_id, v.valuation_id`,
+        ORDER BY d.created_at DESC NULLS LAST, v.project_id DESC, v.valuation_id`,
     )
 
     const map = new Map<string, Row>()
@@ -73,18 +76,30 @@ export class ManagerDraftsService implements OnModuleInit {
       })
     }
     // "Check Drafts" = new arrivals to review; "Corrections" = sent back to fix;
-    // "Final" = locked reports (L1 only).
+    // "Final" = locked reports (L1 only); "Approved" = this level's drafts that
+    // have since moved further up the chain (or, for L1, been locked); "Rejected"
+    // = drafts this level sent back down the chain.
     const CHECK: Record<string, string> = { L3: 'pending_l3', L2: 'pending_l2', L1: 'pending_l1' }
     const CORRECTIONS: Record<string, string> = { L3: 'rejected_l3', L2: 'rejected_l2' }
-    const want =
-      view === 'final'
-        ? 'locked'
-        : view === 'corrections'
-          ? CORRECTIONS[level] ?? ''
-          : CHECK[level] ?? ''
+    const APPROVED: Record<string, string[]> = {
+      L3: ['pending_l2', 'rejected_l2', 'pending_l1', 'locked'],
+      L2: ['pending_l1', 'locked'],
+      L1: ['locked'],
+    }
+    // L1 rejects down to L2 (rejected_l2); L2 rejects down to L3 (rejected_l3);
+    // L3 rejects down to the Technical Officer (rejected_to_to).
+    const REJECTED: Record<string, string> = { L1: 'rejected_l2', L2: 'rejected_l3', L3: 'rejected_to_to' }
     let list = Array.from(map.values())
-    if (want) list = list.filter((p) => p.reviewStatus === want)
-    else list = [] // e.g. no corrections list for L1
+    if (view === 'approved') {
+      const want = APPROVED[level] ?? []
+      list = want.length ? list.filter((p) => want.includes(p.reviewStatus)) : []
+    } else if (view === 'rejected') {
+      const want = REJECTED[level] ?? ''
+      list = want ? list.filter((p) => p.reviewStatus === want) : []
+    } else {
+      const want = view === 'final' ? 'locked' : view === 'corrections' ? CORRECTIONS[level] ?? '' : CHECK[level] ?? ''
+      list = want ? list.filter((p) => p.reviewStatus === want) : []
+    }
     return list
   }
 
@@ -104,12 +119,30 @@ export class ManagerDraftsService implements OnModuleInit {
     } else {
       await this.db.query(
         `INSERT INTO drafts (project_id, review_status, reject_reason) VALUES ($1, $2, $3)
-         ON CONFLICT (project_id) DO UPDATE SET review_status = $2, reject_reason = $3`,
+         ON CONFLICT (project_id) DO UPDATE SET review_status = $2, reject_reason = $3, created_at = now()`,
         [p, status, reason],
       )
     }
     await this.notifyAction(p, status)
     return { ok: true }
+  }
+
+  // Notify the loan applicant and (if resolvable) the requesting bank of a
+  // review milestone on their project. Separate wording for each, since a
+  // bank isn't "your" project. Never throws.
+  private async notifyStakeholders(projectId: string, applicantMsg: string, bankMsg: string) {
+    try {
+      const proj = (await this.db.query(`SELECT applicant_nic, bank_email FROM projects WHERE project_id = $1`, [projectId]))
+        .rows[0] as { applicant_nic?: string; bank_email?: string } | undefined
+      if (proj?.applicant_nic) await this.notifications.create(proj.applicant_nic, applicantMsg)
+      const bankEmail = proj?.bank_email ?? ''
+      if (bankEmail) {
+        const bankUserId = await this.notifications.resolveBankUserId(bankEmail)
+        if (bankUserId) await this.notifications.create(bankUserId, bankMsg)
+      }
+    } catch (err) {
+      this.logger.error(`Stakeholder notification failed: ${(err as Error).message}`)
+    }
   }
 
   // Notify the right people whenever a draft moves through the review chain.
@@ -119,26 +152,39 @@ export class ManagerDraftsService implements OnModuleInit {
         const r = await this.db.query(`SELECT user_id FROM users WHERE role = $1`, [role])
         for (const u of r.rows as Row[]) await this.notifications.create(u.user_id as string, msg)
       }
-      if (status === 'pending_l2') await notifyRole('Manager L2', `Project ${projectId} has been submitted for your L2 check.`)
-      else if (status === 'pending_l1') await notifyRole('Manager L1', `Project ${projectId} has been submitted for your L1 check.`)
-      else if (status === 'rejected_l3') await notifyRole('Manager L3', `Project ${projectId} was sent back to you (L3) for corrections.`)
-      else if (status === 'rejected_l2') await notifyRole('Manager L2', `Project ${projectId} was sent back to you (L2) for corrections.`)
+      if (status === 'pending_l2') {
+        await notifyRole('Manager L2', `Project ${projectId} has been approved at L3 and submitted for your L2 review.`)
+        await this.notifyStakeholders(
+          projectId,
+          `Your valuation report for project ${projectId} has completed its first review and is now progressing to the next stage.`,
+          `The valuation report for project ${projectId} has completed its first review and is now progressing to the next stage.`,
+        )
+      } else if (status === 'pending_l1') {
+        await notifyRole('Manager L1', `Project ${projectId} has been approved at L2 and submitted for your L1 review.`)
+        await this.notifyStakeholders(
+          projectId,
+          `Your valuation report for project ${projectId} has completed its second review and is now undergoing final review.`,
+          `The valuation report for project ${projectId} has completed its second review and is now undergoing final review.`,
+        )
+      }
+      else if (status === 'rejected_l3') await notifyRole('Manager L3', `Project ${projectId} has been returned to you by Manager L2 for corrections.`)
+      else if (status === 'rejected_l2') await notifyRole('Manager L2', `Project ${projectId} has been returned to you by Manager L1 for corrections.`)
       else if (status === 'rejected_to_to') {
         // Send back to the technical officer assigned to this project.
         const to = (await this.db.query(
           `SELECT technical_officer_id FROM valuations WHERE project_id = $1 AND technical_officer_id <> '' ORDER BY valuation_id DESC LIMIT 1`,
           [projectId],
         )).rows[0]?.technical_officer_id as string | undefined
-        if (to) await this.notifications.create(to, `Project ${projectId} was sent back to you for corrections by Manager L3.`)
+        if (to) await this.notifications.create(to, `Project ${projectId} has been returned to you by Manager L3 for corrections.`)
       } else if (status === 'locked') {
         // Report finalised by L1: move the project forward, notify + email the
-        // applicant (asking for payment), and email the bank.
+        // applicant (asking for payment), and notify + email the bank.
         const proj = (await this.db.query(`SELECT applicant_nic, bank_email FROM projects WHERE project_id = $1`, [projectId])).rows[0] as Row
         await this.db.query(`UPDATE projects SET status = $1 WHERE project_id = $2`, ['Report Created — Pending Payment', projectId])
         if (proj?.applicant_nic) {
           await this.notifications.create(
             proj.applicant_nic,
-            `Your valuation report for project ${projectId} has been created. Please make the payment to view it.`,
+            `Your valuation report for project ${projectId} has been finalised. Please complete the payment to access it.`,
           )
           const email = (await this.db.query(
             `SELECT email FROM users WHERE nic = $1 AND role = 'Loan Applicant' LIMIT 1`, [proj.applicant_nic],
@@ -146,7 +192,16 @@ export class ManagerDraftsService implements OnModuleInit {
           if (email) await this.mail.sendReportFinalised(email, projectId, 'applicant')
         }
         const bankEmail = (proj?.bank_email as string) ?? ''
-        if (bankEmail) await this.mail.sendReportFinalised(bankEmail, projectId, 'bank')
+        if (bankEmail) {
+          await this.mail.sendReportFinalised(bankEmail, projectId, 'bank')
+          const bankUserId = await this.notifications.resolveBankUserId(bankEmail)
+          if (bankUserId) {
+            await this.notifications.create(
+              bankUserId,
+              `The valuation report for project ${projectId} has been finalised and will be available to view once payment is received.`,
+            )
+          }
+        }
       }
     } catch (err) {
       this.logger.error(`Review notification failed: ${(err as Error).message}`)

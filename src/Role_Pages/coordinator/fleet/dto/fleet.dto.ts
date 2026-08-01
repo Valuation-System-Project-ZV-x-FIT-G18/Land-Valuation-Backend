@@ -1,18 +1,24 @@
 import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator'
+import { Transform } from 'class-transformer'
+
+// Row ids (valuationRowId, id) come back from other endpoints as numbers
+// (e.g. fleet.service.ts's `rowId: Number(v.id)`), so coerce to a string
+// before validating instead of rejecting the number outright.
+const idTransform = Transform(({ value }) => String(value))
 
 export class AssignFleetDto {
-  @IsString() @MinLength(1) @MaxLength(20) valuationRowId: string
+  @idTransform @IsString() @MinLength(1) @MaxLength(20) valuationRowId: string
   @IsString() @MinLength(1) @MaxLength(20) toId: string
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Date must be YYYY-MM-DD.' }) date: string
   @Matches(/^\d{2}:\d{2}$/, { message: 'Time must be HH:MM.' }) time: string
 }
 
 export class AcceptRejectionDto {
-  @IsString() @MinLength(1) @MaxLength(20) valuationRowId: string
+  @idTransform @IsString() @MinLength(1) @MaxLength(20) valuationRowId: string
 }
 
 export class RejectAssignmentDto {
-  @IsString() @MinLength(1) @MaxLength(20) valuationRowId: string
+  @idTransform @IsString() @MinLength(1) @MaxLength(20) valuationRowId: string
   @IsString() @MinLength(1) @MaxLength(20) toId: string
   @IsString() @MinLength(1) @MaxLength(500) reason: string
 }
@@ -24,5 +30,5 @@ export class MarkLeaveDto {
 }
 
 export class RemoveLeaveDto {
-  @IsString() @MinLength(1) @MaxLength(20) id: string
+  @idTransform @IsString() @MinLength(1) @MaxLength(20) id: string
 }

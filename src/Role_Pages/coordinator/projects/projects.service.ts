@@ -142,8 +142,9 @@ export class ProjectsService implements OnModuleInit {
     return projectId
   }
 
-  // Email the loan applicant (address stored with their account) and the
-  // requesting bank (address entered on the form). Never blocks project creation.
+  // Email + in-system notify the loan applicant (address stored with their
+  // account) and the requesting bank (address entered on the form). Never
+  // blocks project creation.
   private async notifyProjectCreated(
     projectId: string,
     nic: string,
@@ -166,11 +167,24 @@ export class ProjectsService implements OnModuleInit {
         projectId, nic, ownerName, audience: 'applicant',
       })
     }
+    await this.notifications.create(
+      nic,
+      `Your land valuation project ${projectId} has been created and is now being processed.`,
+    )
 
     if (bankEmail) {
       await this.mail.sendProjectCreated(bankEmail, {
         projectId, nic, ownerName, audience: 'bank',
       })
+      // Best-effort in-system notice, only if this address belongs to a
+      // registered bank login (its user_id is the branch code).
+      const bankUserId = await this.notifications.resolveBankUserId(bankEmail)
+      if (bankUserId) {
+        await this.notifications.create(
+          bankUserId,
+          `A new valuation project (${projectId}) has been created for the application you referred (NIC ${nic}).`,
+        )
+      }
     }
   }
 

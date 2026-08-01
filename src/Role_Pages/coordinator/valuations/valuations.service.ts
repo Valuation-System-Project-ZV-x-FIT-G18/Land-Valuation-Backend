@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
+import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 
 // The status set on a project + valuation once a technical officer is assigned.
 const TO_ASSIGNED = 'Technical Officer Assigned'
@@ -51,6 +52,7 @@ export class ValuationsService implements OnModuleInit {
   constructor(
     private readonly db: DatabaseService,
     private readonly mail: MailService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // Make sure the columns/keys this service needs exist (safe to re-run).
@@ -92,13 +94,22 @@ export class ValuationsService implements OnModuleInit {
     }
   }
 
-  // The technical officers a coordinator can assign a valuation to.
+  // The technical officers a coordinator can assign a valuation to — only
+  // those who are actually free (not already assigned open work, and not on
+  // leave today). Kept in sync with the same availability rule used by Fleet
+  // Management (see FleetService.officers()).
   async listTechnicalOfficers() {
     const r = await this.db.query(
       `SELECT user_id, first_name, last_name, email
          FROM users
         WHERE role = 'Technical Officer'
+          AND user_id NOT IN (
+            SELECT technical_officer_id FROM valuations
+             WHERE status = $1 AND technical_officer_id <> '')
+          AND user_id NOT IN (
+            SELECT to_id FROM to_leaves WHERE leave_date = CURRENT_DATE OR leave_date IS NULL)
         ORDER BY first_name, last_name`,
+      [TO_ASSIGNED],
     )
     return r.rows.map((row) => ({
       userId: row.user_id as string,
@@ -137,7 +148,8 @@ export class ValuationsService implements OnModuleInit {
     return { ok: true, projectId, valuationId: Number(row.valuation_id) }
   }
 
-  // Emails the loan applicant and the requesting bank about the assignment.
+  // Emails + in-system notifies the assigned officer, the loan applicant and
+  // the requesting bank about the assignment.
   private async notifyAssigned(projectId: string, nic: string, toId: string) {
     try {
       const proj = await this.db.query(
@@ -160,15 +172,33 @@ export class ValuationsService implements OnModuleInit {
         ? `${to.rows[0].first_name} ${to.rows[0].last_name}`
         : toId
 
+      // In-system notification to the officer — this is the action item.
+      await this.notifications.create(
+        toId,
+        `You have been assigned to project ${projectId} for a site inspection. Please review the project details and schedule your visit.`,
+      )
+
       if (applicantEmail) {
         await this.mail.sendTechnicalOfficerAssigned(applicantEmail, {
           projectId, officerName, audience: 'applicant',
         })
       }
+      await this.notifications.create(
+        nic,
+        `A technical officer (${officerName}) has been assigned to inspect the property for project ${projectId}.`,
+      )
+
       if (bankEmail) {
         await this.mail.sendTechnicalOfficerAssigned(bankEmail, {
           projectId, officerName, audience: 'bank',
         })
+        const bankUserId = await this.notifications.resolveBankUserId(bankEmail)
+        if (bankUserId) {
+          await this.notifications.create(
+            bankUserId,
+            `A technical officer has been assigned to inspect the property for project ${projectId}.`,
+          )
+        }
       }
     } catch (err) {
       this.logger.error(`Assignment notification failed: ${(err as Error).message}`)
@@ -252,16 +282,23 @@ export class ValuationsService implements OnModuleInit {
     }))
   }
 
-  // Compute the 14-step lifecycle from the actual data. `hasValuation`/`toAssigned`
-  // come from the specific (or latest) valuation; the rest are project-level.
+  // Compute the full project-status lifecycle from the actual data.
+  // `hasValuation`/`toAssigned` come from the specific (or latest) valuation;
+  // the rest are project-level. Shown to every role on the shared Project
+  // Status page (applicant, bank, coordinator, technical officer, managers).
   private async computeSteps(projectId: string, nic: string, hasValuation: boolean, toAssigned: boolean) {
     const has = async (sql: string, params: unknown[]) => (await this.db.query(sql, params)).rows.length > 0
     const applicant = await has(`SELECT 1 FROM users WHERE nic = $1 AND role = 'Loan Applicant' LIMIT 1`, [nic])
     const inspection = hasValuation && (await has(`SELECT 1 FROM inspections WHERE project_id = $1 LIMIT 1`, [projectId]))
-    const dr = await this.db.query(`SELECT review_status, paid FROM drafts WHERE project_id = $1`, [projectId])
-    const draft = hasValuation ? (dr.rows[0] as { review_status?: string; paid?: boolean } | undefined) : undefined
+    const dr = await this.db.query(`SELECT review_status, paid, slip_pending FROM drafts WHERE project_id = $1`, [projectId])
+    const draft = hasValuation
+      ? (dr.rows[0] as { review_status?: string; paid?: boolean; slip_pending?: boolean } | undefined)
+      : undefined
     const rs = draft?.review_status ?? ''
     const paid = !!draft?.paid
+    // A card payment is approved instantly; a bank-slip payment sits here
+    // ("paid") pending a coordinator's verification before it counts as approved.
+    const paidSubmitted = paid || !!draft?.slip_pending
     const l3 = ['pending_l2', 'pending_l1', 'rejected_l2', 'locked'].includes(rs)
     const l2 = ['pending_l1', 'locked'].includes(rs)
     const l1 = rs === 'locked'
@@ -281,11 +318,15 @@ export class ValuationsService implements OnModuleInit {
     }
 
     const labels = [
-      'User registered', 'Project created', 'New valuation created',
-      toLabel, 'Done field visit', 'Draft report created', 'L3 check',
-      'L2 check', 'L1 check', 'Report created', 'Pending payment', 'Payment received', 'Valuation end',
+      'Applicant registered', 'Project created', 'Valuation requested',
+      toLabel, 'Site inspected', 'Draft report created', 'Approved by L3',
+      'Approved by L2', 'Approved by L1', 'Final report created',
+      'Payment made', 'Payment approved', 'Report sent to client',
     ]
-    const done = [applicant, true, hasValuation, toAssigned, !!inspection, !!draft, l3, l2, l1, l1, paid, paid, paid]
+    const done = [
+      applicant, true, hasValuation, toAssigned, !!inspection, !!draft, l3,
+      l2, l1, l1, paidSubmitted, paid, paid,
+    ]
     const currentIdx = done.findIndex((d) => !d)
     return {
       steps: labels.map((label, i) => ({

@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
+import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 import { inspectionFields } from './inspection-fields'
 
 const uploadDir = join(process.cwd(), 'uploads')
@@ -12,7 +13,10 @@ const uploadDir = join(process.cwd(), 'uploads')
 export class InspectionsService implements OnModuleInit {
   private readonly logger = new Logger(InspectionsService.name)
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async onModuleInit() {
     try {
@@ -149,6 +153,7 @@ export class InspectionsService implements OnModuleInit {
   async save(projectId: string, toId: string, data: Record<string, string>) {
     const p = (projectId ?? '').trim()
     if (!p) return { ok: false, error: 'Missing project.' }
+    const existed = (await this.db.query(`SELECT 1 FROM inspections WHERE project_id = $1`, [p])).rowCount! > 0
     await this.db.query(
       `INSERT INTO inspections (project_id, to_id, data, status)
        VALUES ($1, $2, $3::jsonb, 'Completed')
@@ -157,6 +162,38 @@ export class InspectionsService implements OnModuleInit {
                      status = 'Completed', created_at = now()`,
       [p, (toId ?? '').trim(), JSON.stringify(data ?? {})],
     )
+    // Only notify the applicant + bank the FIRST time this inspection is
+    // completed — later edits by the officer shouldn't re-notify.
+    if (!existed) await this.notifyInspected(p)
     return { ok: true }
+  }
+
+  // Notify the loan applicant and the requesting bank that the site
+  // inspection is complete. Never throws.
+  private async notifyInspected(projectId: string) {
+    try {
+      const proj = (await this.db.query(`SELECT applicant_nic, bank_email FROM projects WHERE project_id = $1`, [projectId])).rows[0] as
+        | { applicant_nic?: string; bank_email?: string }
+        | undefined
+      const nic = proj?.applicant_nic
+      if (nic) {
+        await this.notifications.create(
+          nic,
+          `The site inspection for your project ${projectId} has been completed. Your valuation report is now being prepared.`,
+        )
+      }
+      const bankEmail = proj?.bank_email ?? ''
+      if (bankEmail) {
+        const bankUserId = await this.notifications.resolveBankUserId(bankEmail)
+        if (bankUserId) {
+          await this.notifications.create(
+            bankUserId,
+            `The site inspection for project ${projectId} has been completed. The valuation report is now being prepared.`,
+          )
+        }
+      }
+    } catch (err) {
+      this.logger.error(`Inspection notification failed: ${(err as Error).message}`)
+    }
   }
 }

@@ -95,13 +95,17 @@ export class FleetService implements OnModuleInit {
         ORDER BY first_name, last_name`,
     )
 
+    // An officer is unavailable only while actively assigned to open work or on
+    // leave today. A *rejected* assignment doesn't tie the officer up — it just
+    // needs a coordinator to review it (see the `rejected` list below) — so it
+    // must NOT also block them from being offered new work elsewhere.
     const available = await this.db.query(
       `SELECT user_id, nic, first_name, last_name, district, phone, email
          FROM users
         WHERE role = 'Technical Officer'
           AND user_id NOT IN (
             SELECT technical_officer_id FROM valuations
-             WHERE status IN ($1, 'Rejected') AND technical_officer_id <> '')
+             WHERE status = $1 AND technical_officer_id <> '')
           AND user_id NOT IN (
             SELECT to_id FROM to_leaves WHERE leave_date = CURRENT_DATE OR leave_date IS NULL)
         ORDER BY first_name, last_name`,
@@ -292,7 +296,8 @@ export class FleetService implements OnModuleInit {
   }
 
   // A technical officer rejects an assigned project (moves them from Assigned to
-  // the Rejected pool until a coordinator accepts it). Notifies the coordinators.
+  // the Rejected pool until a coordinator accepts it). Notifies the coordinators,
+  // and the applicant + bank that the visit is being rescheduled.
   async rejectAssignment(rowId: string, toId: string, reason: string) {
     const n = Number(rowId)
     if (!Number.isInteger(n)) return { ok: false, error: 'Invalid assignment.' }
@@ -303,10 +308,31 @@ export class FleetService implements OnModuleInit {
       [reason.trim() || 'No reason given', n, toId.trim(), TO_ASSIGNED],
     )
     if (!r.rows[0]) return { ok: false, error: 'Assignment not found or already actioned.' }
+    const projectId = r.rows[0].project_id as string
     await this.notifyCoordinators(
-      `Technical Officer ${toId} rejected project ${r.rows[0].project_id}: ${reason.trim() || 'no reason'}.`,
+      `Technical Officer ${toId} rejected project ${projectId}: ${reason.trim() || 'no reason'}.`,
     )
+    await this.notifyRescheduling(projectId)
     return { ok: true }
+  }
+
+  // Tell the applicant + bank their site visit is being rescheduled — kept
+  // neutral (no internal rejection reason) since a new officer will be
+  // assigned shortly. Never throws.
+  private async notifyRescheduling(projectId: string) {
+    try {
+      const proj = (await this.db.query(`SELECT applicant_nic, bank_email FROM projects WHERE project_id = $1`, [projectId]))
+        .rows[0] as { applicant_nic?: string; bank_email?: string } | undefined
+      const message = `The site inspection for project ${projectId} is being rescheduled. We will notify you once a new technical officer is assigned.`
+      if (proj?.applicant_nic) await this.notifications.create(proj.applicant_nic, message)
+      const bankEmail = proj?.bank_email ?? ''
+      if (bankEmail) {
+        const bankUserId = await this.notifications.resolveBankUserId(bankEmail)
+        if (bankUserId) await this.notifications.create(bankUserId, message)
+      }
+    } catch (err) {
+      this.logger.error(`Rescheduling notification failed: ${(err as Error).message}`)
+    }
   }
 
   // Attendance: mark an officer as on leave for a specific day (defaults today).
@@ -359,8 +385,8 @@ export class FleetService implements OnModuleInit {
     }
   }
 
-  // On assignment: e-mail + in-system notify the officer, and e-mail the loan
-  // applicant that a technical officer has been assigned. Never throws.
+  // On assignment: e-mail + in-system notify the officer, the loan applicant,
+  // and (best-effort) the requesting bank. Never throws.
   private async notifyAssignment(
     toId: string,
     projectId: string,
@@ -391,7 +417,8 @@ export class FleetService implements OnModuleInit {
         `You have been assigned to project ${projectId} for a site inspection on ${date} at ${time}.`,
       )
 
-      // 3) Email the loan applicant that a technical officer is now assigned.
+      // 3) Email + in-system notify the loan applicant that a technical
+      // officer is now assigned.
       if (nic) {
         const appl = await this.db.query(
           `SELECT email FROM users WHERE nic = $1 AND role = 'Loan Applicant' LIMIT 1`,
@@ -404,6 +431,27 @@ export class FleetService implements OnModuleInit {
             officerName,
             audience: 'applicant',
           })
+        }
+        await this.notifications.create(
+          nic,
+          `A technical officer (${officerName}) has been assigned to inspect the property for project ${projectId}, scheduled for ${date} at ${time}.`,
+        )
+      }
+
+      // 4) In-system notify the requesting bank, if its login is resolvable
+      // from the address stored on the project.
+      const proj = await this.db.query(
+        `SELECT bank_email FROM projects WHERE project_id = $1 LIMIT 1`,
+        [projectId],
+      )
+      const bankEmail = (proj.rows[0]?.bank_email as string) ?? ''
+      if (bankEmail) {
+        const bankUserId = await this.notifications.resolveBankUserId(bankEmail)
+        if (bankUserId) {
+          await this.notifications.create(
+            bankUserId,
+            `A technical officer has been assigned to inspect the property for project ${projectId}.`,
+          )
         }
       }
     } catch (err) {
