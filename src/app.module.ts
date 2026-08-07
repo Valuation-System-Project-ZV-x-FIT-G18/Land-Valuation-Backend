@@ -13,6 +13,7 @@ import { AdminModule } from './Role_Pages/admin/admin.module'
 import { MessagesModule } from './Common_Pages/messages/messages.module'
 import { NotificationsModule } from './Common_Pages/notifications/notifications.module'
 import { DocumentsModule } from './Role_Pages/loan-applicant/documents/documents.module'
+import { ProjectDetailsModule } from './Role_Pages/loan-applicant/project-details/project-details.module'
 import { AssignmentsModule } from './Role_Pages/technical-officer/assignments/assignments.module'
 import { InspectionsModule } from './Role_Pages/technical-officer/inspections/inspections.module'
 import { SitePhotosModule } from './Role_Pages/technical-officer/site-photos/site-photos.module'
@@ -42,6 +43,7 @@ import { BanksModule } from './Role_Pages/coordinator/banks/banks.module'
     MessagesModule, // /api/messages
     NotificationsModule, // /api/notifications
     DocumentsModule, // /api/applicant/documents
+    ProjectDetailsModule, // /api/applicant/project-details
     BanksModule, // /api/coordinator/banks
     AssignmentsModule, // /api/technical-officer/assignments
     InspectionsModule, // /api/technical-officer/inspections
