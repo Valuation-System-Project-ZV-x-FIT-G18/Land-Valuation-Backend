@@ -3,6 +3,7 @@ import { DatabaseService } from '../../../Common_Pages/database/database.service
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 import { projectFieldColumns } from './constants/project-fields'
+import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
 
 type Body = { applicantNic?: string; coordinatorId?: string; data?: string }
 type Files = Record<string, Express.Multer.File[]>
@@ -18,6 +19,7 @@ export class ProjectsService implements OnModuleInit {
     private readonly db: DatabaseService,
     private readonly mail: MailService,
     private readonly notifications: NotificationsService,
+    private readonly storage: ObjectStorageService,
   ) {}
 
   // Make sure every form field has its own column (safe to run repeatedly).
@@ -33,6 +35,7 @@ export class ProjectsService implements OnModuleInit {
     }
     try {
       await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS file_data BYTEA`)
+      await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
     } catch (err) {
       this.logger.error(`Could not ensure project file storage: ${(err as Error).message}`)
     }
@@ -120,14 +123,15 @@ export class ProjectsService implements OnModuleInit {
     // complete bytes in `buffer`, which are persisted directly in PostgreSQL.
     for (const [fieldName, list] of Object.entries(files ?? {})) {
       for (const f of list) {
+        const stored = await this.storage.store(f, `projects/${projectId}/${fieldName}`)
         const saved = await this.db.query(
           `INSERT INTO project_files
-             (project_id, file_type, file_name, file_path, mime, size, file_data)
-           VALUES ($1, $2, $3, '', $4, $5, $6)
+             (project_id, file_type, file_name, file_path, mime, size, file_data, object_key)
+           VALUES ($1, $2, $3, '', $4, $5, $6, $7)
            RETURNING octet_length(file_data) AS stored_bytes`,
-          [projectId, fieldName, f.originalname, f.mimetype, f.size, f.buffer],
+          [projectId, fieldName, f.originalname, f.mimetype, f.size, stored.databaseFallback, stored.objectKey],
         )
-        if (Number(saved.rows[0]?.stored_bytes ?? 0) !== f.size) {
+        if (!stored.objectKey && Number(saved.rows[0]?.stored_bytes ?? 0) !== f.size) {
           throw new Error(`Document "${f.originalname}" was not stored completely.`)
         }
       }
@@ -223,17 +227,18 @@ export class ProjectsService implements OnModuleInit {
   // The latest uploaded file of a given type for a project (e.g. surveyPlan).
   async fileAttachment(projectId: string, fileType: string) {
     const r = await this.db.query(
-      `SELECT file_name, file_path, mime, file_data FROM project_files
+      `SELECT file_name, file_path, mime, file_data, object_key FROM project_files
         WHERE project_id = $1 AND file_type = $2 ORDER BY id DESC LIMIT 1`,
       [(projectId ?? '').trim(), (fileType ?? '').trim()],
     )
     const p = r.rows[0]
-    if (!p || (!p.file_data && !p.file_path)) return null
+    if (!p || (!p.object_key && !p.file_data && !p.file_path)) return null
+    const objectData = await this.storage.read(p.object_key as string)
     return {
       fileName: p.file_name as string,
       filePath: (p.file_path as string) || '',
       mime: (p.mime as string) || 'application/octet-stream',
-      data: (p.file_data as Buffer | null) ?? null,
+      data: objectData ?? (p.file_data as Buffer | null) ?? null,
     }
   }
 }

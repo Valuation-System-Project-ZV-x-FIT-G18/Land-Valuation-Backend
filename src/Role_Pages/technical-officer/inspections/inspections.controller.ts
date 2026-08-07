@@ -8,14 +8,9 @@ import {
   UseInterceptors,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
-import { diskStorage } from 'multer'
-import { extname, join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { memoryStorage } from 'multer'
 import { InspectionsService } from './inspections.service'
 import { SaveInspectionDto } from './dto/save-inspection.dto'
-
-const uploadDir = join(process.cwd(), 'uploads')
-if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 
 @Controller('technical-officer/inspections')
 export class InspectionsController {
@@ -25,17 +20,13 @@ export class InspectionsController {
   @Post('ocr')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (_req, file, cb) =>
-          cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
-  async ocr(@UploadedFile() file?: Express.Multer.File) {
+  async ocr(@Body('projectId') projectId: string, @UploadedFile() file?: Express.Multer.File) {
     if (!file) return { fields: {}, rawText: '', ocrError: 'No file uploaded.' }
-    return this.inspections.ocr(file.filename, file.originalname)
+    return this.inspections.ocr(projectId ?? '', file)
   }
 
   // GET /api/technical-officer/inspections?projectId=...

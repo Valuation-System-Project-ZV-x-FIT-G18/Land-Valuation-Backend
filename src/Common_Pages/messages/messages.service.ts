@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../database/database.service'
+import { ObjectStorageService } from '../storage/object-storage.service'
 
 type Row = Record<string, unknown>
 
@@ -8,7 +9,7 @@ type Row = Record<string, unknown>
 export class MessagesService implements OnModuleInit {
   private readonly logger = new Logger(MessagesService.name)
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService, private readonly storage: ObjectStorageService) {}
 
   async onModuleInit() {
     try {
@@ -26,6 +27,9 @@ export class MessagesService implements OnModuleInit {
       )
       await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name VARCHAR(255) NOT NULL DEFAULT ''`)
       await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_path VARCHAR(255) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_data BYTEA`)
+      await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
       await this.db.query(`ALTER TABLE messages ALTER COLUMN body SET DEFAULT ''`)
       await this.db.query(
         `CREATE INDEX IF NOT EXISTS messages_pair_idx ON messages (sender_id, recipient_id)`,
@@ -65,7 +69,7 @@ export class MessagesService implements OnModuleInit {
     senderId: string,
     recipientId: string,
     body: string,
-    file?: { originalname: string; filename: string },
+    file?: Express.Multer.File,
   ) {
     const s = (senderId ?? '').trim()
     const rcpt = (recipientId ?? '').trim()
@@ -76,11 +80,12 @@ export class MessagesService implements OnModuleInit {
     const exists = await this.db.query(`SELECT 1 FROM users WHERE user_id = $1`, [rcpt])
     if (!exists.rows[0]) return { ok: false, error: 'Recipient not found.' }
 
+    const stored = file ? await this.storage.store(file, `messages/${s}/${rcpt}`) : { objectKey: '', databaseFallback: null }
     const r = await this.db.query(
-      `INSERT INTO messages (sender_id, recipient_id, body, file_name, file_path)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO messages (sender_id, recipient_id, body, file_name, file_path, file_mime, file_data, object_key)
+       VALUES ($1, $2, $3, $4, '', $5, $6, $7)
        RETURNING id, sender_id, recipient_id, body, file_name, read, created_at`,
-      [s, rcpt, b, file?.originalname ?? '', file?.filename ?? ''],
+      [s, rcpt, b, file?.originalname ?? '', file?.mimetype ?? '', stored.databaseFallback, stored.objectKey],
     )
     return { ok: true, message: this.toMessage(r.rows[0]) }
   }
@@ -90,13 +95,14 @@ export class MessagesService implements OnModuleInit {
     const n = Number(id)
     if (!Number.isInteger(n)) return null
     const r = await this.db.query(
-      `SELECT sender_id, recipient_id, file_name, file_path FROM messages WHERE id = $1`,
+      `SELECT sender_id, recipient_id, file_name, file_path, file_mime, file_data, object_key FROM messages WHERE id = $1`,
       [n],
     )
     const m = r.rows[0]
-    if (!m || !m.file_path) return null
+    if (!m || (!m.object_key && !m.file_data && !m.file_path)) return null
     if (m.sender_id !== userId && m.recipient_id !== userId) return null // not yours
-    return { fileName: m.file_name as string, filePath: m.file_path as string }
+    const objectData = await this.storage.read(m.object_key as string)
+    return { fileName: m.file_name as string, filePath: m.file_path as string, mime: m.file_mime as string, data: objectData ?? m.file_data as Buffer | null }
   }
 
   // The full conversation between two users (both directions). Also marks the

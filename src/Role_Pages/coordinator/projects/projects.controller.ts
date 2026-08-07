@@ -12,6 +12,7 @@ import type { Response } from 'express'
 import { FileFieldsInterceptor } from '@nestjs/platform-express'
 import { memoryStorage } from 'multer'
 import { join } from 'path'
+import { existsSync } from 'fs'
 import { ProjectsService } from './projects.service'
 import { CreateProjectDto } from './dto/create-project.dto'
 
@@ -70,7 +71,14 @@ export class ProjectsController {
       return
     }
     // Backward compatibility for documents uploaded before database storage.
-    res.sendFile(join(uploadDir, f.filePath))
+    const legacyPath = join(uploadDir, f.filePath)
+    if (!f.filePath || !existsSync(legacyPath)) {
+      res.status(410).json({
+        error: 'This legacy file is no longer present on the server. Please upload it again; new uploads use persistent object storage.',
+      })
+      return
+    }
+    res.sendFile(legacyPath)
   }
 
   // POST /api/coordinator/projects  (multipart/form-data)

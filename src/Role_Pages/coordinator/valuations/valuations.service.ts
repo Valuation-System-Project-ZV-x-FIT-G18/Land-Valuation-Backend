@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
+import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
 
 // The status set on a project + valuation once a technical officer is assigned.
 const TO_ASSIGNED = 'Technical Officer Assigned'
@@ -53,6 +54,7 @@ export class ValuationsService implements OnModuleInit {
     private readonly db: DatabaseService,
     private readonly mail: MailService,
     private readonly notifications: NotificationsService,
+    private readonly storage: ObjectStorageService,
   ) {}
 
   // Make sure the columns/keys this service needs exist (safe to re-run).
@@ -60,6 +62,10 @@ export class ValuationsService implements OnModuleInit {
     const columns = [
       `status VARCHAR(40) NOT NULL DEFAULT 'Created'`,
       `request_letter_path VARCHAR(255) NOT NULL DEFAULT ''`,
+      `request_letter_name VARCHAR(255) NOT NULL DEFAULT ''`,
+      `request_letter_mime VARCHAR(100) NOT NULL DEFAULT ''`,
+      `request_letter_data BYTEA`,
+      `request_letter_object_key VARCHAR(1024) NOT NULL DEFAULT ''`,
       `technical_officer_id VARCHAR(20) NOT NULL DEFAULT ''`,
     ]
     for (const def of columns) {
@@ -79,15 +85,30 @@ export class ValuationsService implements OnModuleInit {
   async create(body: { projectId?: string; applicantNic?: string; data?: string }, file?: Express.Multer.File) {
     const projectId = (body.projectId ?? '').trim()
     // valuation_id = (highest number this project already has) + 1.
+    const stored = file ? await this.storage.store(file, `valuations/${projectId}`) : { objectKey: '', databaseFallback: null }
     const result = await this.db.query(
-      `INSERT INTO valuations (valuation_id, project_id, applicant_nic, details, request_letter_path)
+      `INSERT INTO valuations (
+         valuation_id, project_id, applicant_nic, details, request_letter_path,
+         request_letter_name, request_letter_mime, request_letter_data, request_letter_object_key
+       )
        VALUES (
          (SELECT COALESCE(MAX(valuation_id), 0) + 1 FROM valuations WHERE project_id = $1),
-         $1, $2, $3::jsonb, $4
+         $1, $2, $3::jsonb, '', $4, $5, $6, $7
        )
-       RETURNING id, valuation_id`,
-      [projectId, (body.applicantNic ?? '').trim(), body.data || '{}', file?.filename ?? ''],
+       RETURNING id, valuation_id, octet_length(request_letter_data) AS stored_bytes`,
+      [
+        projectId,
+        (body.applicantNic ?? '').trim(),
+        body.data || '{}',
+        file?.originalname ?? '',
+        file?.mimetype ?? '',
+        stored.databaseFallback,
+        stored.objectKey,
+      ],
     )
+    if (file && !stored.objectKey && Number(result.rows[0]?.stored_bytes ?? 0) !== file.size) {
+      throw new Error(`Request letter "${file.originalname}" was not stored completely.`)
+    }
     await this.notifyValuationRequested(
       projectId,
       (body.applicantNic ?? '').trim(),
@@ -263,7 +284,7 @@ export class ValuationsService implements OnModuleInit {
     if (!Number.isInteger(n)) return null
     const r = await this.db.query(
       `SELECT id, valuation_id, project_id, applicant_nic, status, details,
-              request_letter_path, created_at
+              request_letter_path, request_letter_data, request_letter_object_key, created_at
          FROM valuations WHERE id = $1 LIMIT 1`,
       [n],
     )
@@ -278,21 +299,29 @@ export class ValuationsService implements OnModuleInit {
       nic: row.applicant_nic as string,
       status: row.status as string,
       details: details as Record<string, string>,
-      hasRequestLetter: !!(row.request_letter_path as string),
+      hasRequestLetter: !!(row.request_letter_object_key || row.request_letter_data || row.request_letter_path),
       createdAt: row.created_at as string,
     }
   }
 
   // The stored request-letter filename for a valuation (for file streaming).
-  async requestLetterPath(rowId: string) {
+  async requestLetter(rowId: string) {
     const n = Number(rowId)
     if (!Number.isInteger(n)) return null
     const r = await this.db.query(
-      `SELECT request_letter_path FROM valuations WHERE id = $1 LIMIT 1`,
+      `SELECT request_letter_path, request_letter_name, request_letter_mime, request_letter_data, request_letter_object_key
+         FROM valuations WHERE id = $1 LIMIT 1`,
       [n],
     )
-    const p = r.rows[0]?.request_letter_path as string | undefined
-    return p ? p : null
+    const row = r.rows[0]
+    if (!row || (!row.request_letter_object_key && !row.request_letter_data && !row.request_letter_path)) return null
+    const objectData = await this.storage.read(row.request_letter_object_key as string)
+    return {
+      path: (row.request_letter_path as string) || '',
+      fileName: (row.request_letter_name as string) || 'request-letter.pdf',
+      mime: (row.request_letter_mime as string) || 'application/pdf',
+      data: objectData ?? (row.request_letter_data as Buffer | null) ?? null,
+    }
   }
 
   // Every valuation raised for an applicant (across all their projects). Used by

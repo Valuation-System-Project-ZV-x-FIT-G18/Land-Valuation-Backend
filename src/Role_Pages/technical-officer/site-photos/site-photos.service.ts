@@ -1,10 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
-import { readFile } from 'fs/promises'
-import { extname, join } from 'path'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { AiService } from '../../../Common_Pages/ai/ai.service'
-
-const uploadDir = join(process.cwd(), 'uploads')
+import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
 
 // Site photographs a technical officer uploads per project. One row per
 // (project, photo type); re-uploading replaces the previous photo. For the main
@@ -16,6 +13,7 @@ export class SitePhotosService implements OnModuleInit {
   constructor(
     private readonly db: DatabaseService,
     private readonly ai: AiService,
+    private readonly storage: ObjectStorageService,
   ) {}
 
   async onModuleInit() {
@@ -33,6 +31,9 @@ export class SitePhotosService implements OnModuleInit {
          )`,
       )
       await this.db.query(`ALTER TABLE site_photos ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE site_photos ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE site_photos ADD COLUMN IF NOT EXISTS file_data BYTEA`)
+      await this.db.query(`ALTER TABLE site_photos ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
     } catch (err) {
       this.logger.error(`Site photos setup failed: ${(err as Error).message}`)
     }
@@ -56,7 +57,7 @@ export class SitePhotosService implements OnModuleInit {
     projectId: string,
     toId: string,
     photoType: string,
-    file?: { originalname: string; filename: string },
+    file?: Express.Multer.File,
     describe = false,
     photoLabel = '',
   ) {
@@ -65,26 +66,27 @@ export class SitePhotosService implements OnModuleInit {
     if (!p || !t || !file) return { ok: false, error: 'Missing details or file.' }
 
     // Caption the image (only for the main categories, never "additional").
-    const description = describe ? await this.caption(file.filename, photoLabel || t) : ''
+    const description = describe ? await this.caption(file.buffer, file.mimetype, photoLabel || t) : ''
+    const stored = await this.storage.store(file, `site-photos/${p}/${t}`)
 
     await this.db.query(
-      `INSERT INTO site_photos (project_id, to_id, photo_type, file_name, file_path, description)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO site_photos (project_id, to_id, photo_type, file_name, file_path, description, file_mime, file_data, object_key)
+       VALUES ($1, $2, $3, $4, '', $5, $6, $7, $8)
        ON CONFLICT (project_id, photo_type)
        DO UPDATE SET to_id = EXCLUDED.to_id, file_name = EXCLUDED.file_name,
-                     file_path = EXCLUDED.file_path, description = EXCLUDED.description,
+                     file_path = '', description = EXCLUDED.description, file_mime = EXCLUDED.file_mime,
+                     file_data = EXCLUDED.file_data, object_key = EXCLUDED.object_key,
                      created_at = now()`,
-      [p, (toId ?? '').trim(), t, file.originalname, file.filename, description],
+      [p, (toId ?? '').trim(), t, file.originalname, description, file.mimetype, stored.databaseFallback, stored.objectKey],
     )
     return { ok: true, description }
   }
 
   // One very short AI caption of the uploaded photograph.
-  private async caption(fileName: string, label: string): Promise<string> {
+  private async caption(buf: Buffer, mime: string, label: string): Promise<string> {
     if (!this.ai.isEnabled()) return ''
     try {
-      const buf = await readFile(join(uploadDir, fileName))
-      const image = { mediaType: this.mime(fileName), base64: buf.toString('base64') }
+      const image = { mediaType: mime || 'image/jpeg', base64: buf.toString('base64') }
       const prompt =
         `This is a land-valuation site photograph labelled "${label}". ` +
         `In ONE short sentence (max 14 words), describe what it shows. Output only the sentence.`
@@ -96,22 +98,15 @@ export class SitePhotosService implements OnModuleInit {
     }
   }
 
-  private mime(path: string): string {
-    const e = extname(path).toLowerCase()
-    if (e === '.png') return 'image/png'
-    if (e === '.webp') return 'image/webp'
-    if (e === '.gif') return 'image/gif'
-    return 'image/jpeg'
-  }
-
   async attachment(projectId: string, photoType: string) {
     const r = await this.db.query(
-      `SELECT file_name, file_path FROM site_photos
+      `SELECT file_name, file_path, file_mime, file_data, object_key FROM site_photos
         WHERE project_id = $1 AND photo_type = $2`,
       [(projectId ?? '').trim(), (photoType ?? '').trim()],
     )
     const p = r.rows[0]
-    if (!p || !p.file_path) return null
-    return { fileName: p.file_name as string, filePath: p.file_path as string }
+    if (!p || (!p.object_key && !p.file_data && !p.file_path)) return null
+    const objectData = await this.storage.read(p.object_key as string)
+    return { fileName: p.file_name as string, filePath: p.file_path as string, mime: (p.file_mime as string) || 'image/jpeg', data: objectData ?? p.file_data as Buffer }
   }
 }
