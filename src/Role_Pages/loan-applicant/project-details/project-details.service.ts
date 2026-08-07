@@ -164,20 +164,28 @@ export class ProjectDetailsService implements OnModuleInit {
   async attachment(draftId: number, docType: string) {
     if (!Number.isInteger(draftId)) return null
     const r = await this.db.query(
+<<<<<<< HEAD
       `SELECT file_name, file_path, file_mime, file_data, object_key
          FROM applicant_project_detail_files
+=======
+      `SELECT file_name, file_mime, object_key FROM applicant_project_detail_files
+>>>>>>> b75f317 (Describe your changes)
         WHERE draft_id = $1 AND doc_type = $2`,
       [draftId, (docType ?? '').trim()],
     )
     const f = r.rows[0]
-    if (!f || (!f.object_key && !f.file_data && !f.file_path)) return null
+    if (!f?.object_key) return null
     const objectData = await this.storage.read(f.object_key as string)
+<<<<<<< HEAD
     return {
       fileName: f.file_name as string,
       filePath: (f.file_path as string) || '',
       mime: (f.file_mime as string) || 'application/octet-stream',
       data: objectData ?? (f.file_data as Buffer | null) ?? null,
     }
+=======
+    return { fileName: f.file_name as string, mime: f.file_mime as string, data: objectData }
+>>>>>>> b75f317 (Describe your changes)
   }
 
   async markUsed(id: number) {

@@ -301,11 +301,11 @@ export class ReportAccessService implements OnModuleInit {
 
   // The stored slip filename (for the coordinator to view it).
   async slipFile(projectId: string) {
-    const r = await this.db.query(`SELECT slip_path, slip_name, slip_mime, slip_data, slip_object_key FROM drafts WHERE project_id = $1`, [(projectId ?? '').trim()])
+    const r = await this.db.query(`SELECT slip_name, slip_mime, slip_object_key FROM drafts WHERE project_id = $1`, [(projectId ?? '').trim()])
     const row = r.rows[0]
-    if (!row || (!row.slip_object_key && !row.slip_data && !row.slip_path)) return null
+    if (!row?.slip_object_key) return null
     const objectData = await this.storage.read(row.slip_object_key as string)
-    return { path: (row.slip_path as string) || '', fileName: (row.slip_name as string) || 'payment-slip', mime: (row.slip_mime as string) || 'application/octet-stream', data: objectData ?? row.slip_data as Buffer | null }
+    return { fileName: (row.slip_name as string) || 'payment-slip', mime: (row.slip_mime as string) || 'application/octet-stream', data: objectData }
   }
 
   // Whether the bank may view a project's report (locked AND paid).

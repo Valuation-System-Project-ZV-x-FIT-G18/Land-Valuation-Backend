@@ -90,10 +90,11 @@ export class MessagesService implements OnModuleInit {
     const n = Number(id)
     if (!Number.isInteger(n)) return null
     const r = await this.db.query(
-      `SELECT sender_id, recipient_id, file_name, file_path, file_mime, file_data, object_key FROM messages WHERE id = $1`,
+      `SELECT sender_id, recipient_id, file_name, file_mime, object_key FROM messages WHERE id = $1`,
       [n],
     )
     const m = r.rows[0]
+<<<<<<< HEAD
     if (!m || (!m.object_key && !m.file_data && !m.file_path)) return null
     if (m.sender_id !== userId && m.recipient_id !== userId) return null
     const objectData = await this.storage.read(m.object_key as string)
@@ -103,6 +104,12 @@ export class MessagesService implements OnModuleInit {
       mime: (m.file_mime as string) || 'application/octet-stream',
       data: objectData ?? (m.file_data as Buffer | null) ?? null,
     }
+=======
+    if (!m?.object_key) return null
+    if (m.sender_id !== userId && m.recipient_id !== userId) return null // not yours
+    const objectData = await this.storage.read(m.object_key as string)
+    return { fileName: m.file_name as string, mime: m.file_mime as string, data: objectData }
+>>>>>>> b75f317 (Describe your changes)
   }
 
   async conversation(userId: string, otherId: string) {

@@ -10,12 +10,11 @@ import {
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { memoryStorage } from 'multer'
-import { join } from 'path'
-import { existsSync } from 'fs'
 import type { Response } from 'express'
 import { MessagesService } from './messages.service'
 import { SendMessageDto } from './dto/send-message.dto'
 
+<<<<<<< HEAD
 const uploadDir = join(process.cwd(), 'uploads')
 
 function sendFileResponse(
@@ -40,6 +39,8 @@ function sendFileResponse(
   res.status(404).json({ error: 'File not found.' })
 }
 
+=======
+>>>>>>> b75f317 (Describe your changes)
 @Controller('messages')
 export class MessagesController {
   constructor(private readonly messages: MessagesService) {}
@@ -80,10 +81,18 @@ export class MessagesController {
     @Res() res: Response,
   ) {
     const file = await this.messages.attachment(id ?? '', userId ?? '')
+<<<<<<< HEAD
     if (!file) {
       res.status(404).json({ error: 'File not found.' })
       return
     }
     sendFileResponse(res, file)
+=======
+    if (!file) { res.status(404).json({ error: 'File not found.' }); return }
+    if (!file.data) { res.status(404).json({ error: 'Object not found in Supabase Storage.' }); return }
+    res.setHeader('Content-Type', file.mime || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`)
+    res.send(file.data)
+>>>>>>> b75f317 (Describe your changes)
   }
 }

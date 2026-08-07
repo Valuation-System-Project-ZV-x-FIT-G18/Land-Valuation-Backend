@@ -123,19 +123,27 @@ export class DocumentsService implements OnModuleInit {
 
   async attachment(nic: string, projectId: string, docType: string) {
     const r = await this.db.query(
+<<<<<<< HEAD
       `SELECT file_name, file_path, COALESCE(NULLIF(file_mime, ''), mime) AS mime, file_data, object_key
          FROM applicant_documents
+=======
+      `SELECT file_name, file_mime, object_key FROM applicant_documents
+>>>>>>> b75f317 (Describe your changes)
         WHERE applicant_nic = $1 AND project_id = $2 AND doc_type = $3`,
       [(nic ?? '').trim(), (projectId ?? '').trim(), (docType ?? '').trim()],
     )
     const d = r.rows[0]
-    if (!d || (!d.object_key && !d.file_data && !d.file_path)) return null
+    if (!d?.object_key) return null
     const objectData = await this.storage.read(d.object_key as string)
+<<<<<<< HEAD
     return {
       fileName: d.file_name as string,
       filePath: (d.file_path as string) || '',
       mime: (d.mime as string) || 'application/octet-stream',
       data: objectData ?? (d.file_data as Buffer | null) ?? null,
     }
+=======
+    return { fileName: d.file_name as string, mime: d.file_mime as string, data: objectData }
+>>>>>>> b75f317 (Describe your changes)
   }
 }

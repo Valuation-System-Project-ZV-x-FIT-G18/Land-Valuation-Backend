@@ -1,11 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
-import { readFile } from 'fs/promises'
-import { extname, join } from 'path'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { AiService } from '../../../Common_Pages/ai/ai.service'
 import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
 
-const uploadDir = join(process.cwd(), 'uploads')
 type Row = Record<string, any>
 
 // Which data source each field is read from.
@@ -155,7 +152,7 @@ export class DescriptionsService implements OnModuleInit {
       [nic],
     )
     const insp = await this.db.query(`SELECT data FROM inspections WHERE project_id = $1`, [projectId])
-    const photos = await this.db.query(`SELECT photo_type, file_path, file_mime, file_data, object_key FROM site_photos WHERE project_id = $1`, [projectId])
+    const photos = await this.db.query(`SELECT photo_type, file_mime, object_key FROM site_photos WHERE project_id = $1`, [projectId])
     // Bank/branch from the valuation (its details), not the deprecated table.
     const vd = ((await this.db.query(
       `SELECT details FROM valuations WHERE project_id = $1 ORDER BY valuation_id DESC LIMIT 1`, [projectId],
@@ -167,7 +164,7 @@ export class DescriptionsService implements OnModuleInit {
       details: (project.details ?? {}) as Row,
       applicant: (appl.rows[0] ?? null) as Row | null,
       inspection: (insp.rows[0]?.data ?? {}) as Row,
-      photos: photos.rows as { photo_type: string; file_path: string; file_mime: string; file_data: Buffer | null; object_key: string }[],
+      photos: photos.rows as { photo_type: string; file_mime: string; object_key: string }[],
       bank: (bank.rows[0] ?? null) as Row | null,
     }
   }
@@ -233,16 +230,15 @@ export class DescriptionsService implements OnModuleInit {
     return { text: this.tpl(section, fields), aiUsed: false }
   }
 
-  private async generateImages(photos: { photo_type: string; file_path: string; file_mime: string; file_data: Buffer | null; object_key: string }[]) {
+  private async generateImages(photos: { photo_type: string; file_mime: string; object_key: string }[]) {
     if (this.ai.isEnabled()) {
       try {
-        const pick = photos.filter((p) => p.object_key || p.file_data || p.file_path).slice(0, 5)
+        const pick = photos.filter((p) => p.object_key).slice(0, 5)
         if (pick.length) {
           const images: { mediaType: string; base64: string }[] = []
           for (const p of pick) {
-            const objectData = await this.storage.read(p.object_key)
-            const buf = objectData ?? p.file_data ?? await readFile(join(uploadDir, p.file_path))
-            images.push({ mediaType: p.file_mime || this.mime(p.file_path), base64: buf.toString('base64') })
+            const buf = await this.storage.read(p.object_key)
+            if (buf) images.push({ mediaType: p.file_mime || 'image/jpeg', base64: buf.toString('base64') })
           }
           const labels = pick.map((p, i) => `${i + 1}. ${p.photo_type}`).join('\n')
           const text = (
@@ -263,14 +259,6 @@ export class DescriptionsService implements OnModuleInit {
         ? 'No site photographs uploaded.'
         : `AI image analysis unavailable (no API key). ${photos.length} photo(s): ${photos.map((p) => p.photo_type).join(', ')}.`
     return { text, aiUsed: false }
-  }
-
-  private mime(path: string): string {
-    const e = extname(path).toLowerCase()
-    if (e === '.png') return 'image/png'
-    if (e === '.webp') return 'image/webp'
-    if (e === '.gif') return 'image/gif'
-    return 'image/jpeg'
   }
 
   // ---- templates (no AI key) ---------------------------------------------

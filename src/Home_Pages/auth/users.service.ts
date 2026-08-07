@@ -132,13 +132,14 @@ export class UsersService implements OnModuleInit {
 
   // The stored profile-picture bytes + content type, for serving it back.
   async getPhoto(userId: string): Promise<{ data: Buffer; mime: string } | null> {
-    const r = await this.db.query(`SELECT photo_data, photo_mime, photo_object_key FROM users WHERE user_id = $1`, [
+    const r = await this.db.query(`SELECT photo_mime, photo_object_key FROM users WHERE user_id = $1`, [
       userId,
     ])
     const row = r.rows[0]
-    if (!row?.photo_object_key && !row?.photo_data) return null
+    if (!row?.photo_object_key) return null
     const objectData = await this.storage.read(row.photo_object_key as string)
-    return { data: objectData ?? row.photo_data as Buffer, mime: (row.photo_mime as string) || 'image/jpeg' }
+    if (!objectData) return null
+    return { data: objectData, mime: (row.photo_mime as string) || 'image/jpeg' }
   }
 
   // Update the user's personal fields. Identity fields (user_id, role, nic) and

@@ -32,7 +32,7 @@ import { ObjectStorageModule } from './Common_Pages/storage/object-storage.modul
   imports: [
     ConfigModule.forRoot({ isGlobal: true }), // loads .env everywhere
     DatabaseModule, // PostgreSQL connection
-    ObjectStorageModule, // private Cloudflare R2 object storage
+    ObjectStorageModule, // private Supabase object storage
     MailModule, // email sending
     ContactModule, // /api/contact
     ValuationModule, // /api/valuation

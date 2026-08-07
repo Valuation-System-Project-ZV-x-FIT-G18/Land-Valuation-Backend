@@ -11,11 +11,10 @@ import {
 import type { Response } from 'express'
 import { FileFieldsInterceptor } from '@nestjs/platform-express'
 import { memoryStorage } from 'multer'
-import { join } from 'path'
-import { existsSync } from 'fs'
 import { ProjectsService } from './projects.service'
 import { CreateProjectDto } from './dto/create-project.dto'
 
+<<<<<<< HEAD
 const uploadDir = join(process.cwd(), 'uploads')
 
 function sendFileResponse(
@@ -42,6 +41,8 @@ function sendFileResponse(
   res.status(404).json({ error: 'File not found.' })
 }
 
+=======
+>>>>>>> b75f317 (Describe your changes)
 const fileFields = [
   { name: 'surveyPlan', maxCount: 1 },
   { name: 'titleDeed', maxCount: 1 },
@@ -83,11 +84,19 @@ export class ProjectsController {
     @Res() res: Response,
   ) {
     const f = await this.projects.fileAttachment(projectId ?? '', type ?? '')
+<<<<<<< HEAD
     if (!f) {
       res.status(404).json({ error: 'File not found.' })
       return
     }
     sendFileResponse(res, f)
+=======
+    if (!f) { res.status(404).json({ error: 'File not found.' }); return }
+    if (!f.data) { res.status(404).json({ error: 'Object not found in Supabase Storage.' }); return }
+    res.setHeader('Content-Type', f.mime || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(f.fileName)}`)
+    res.send(f.data)
+>>>>>>> b75f317 (Describe your changes)
   }
 
   @Post()

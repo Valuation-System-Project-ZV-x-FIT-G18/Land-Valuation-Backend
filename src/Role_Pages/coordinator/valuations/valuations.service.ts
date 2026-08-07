@@ -284,7 +284,7 @@ export class ValuationsService implements OnModuleInit {
     if (!Number.isInteger(n)) return null
     const r = await this.db.query(
       `SELECT id, valuation_id, project_id, applicant_nic, status, details,
-              request_letter_path, request_letter_data, request_letter_object_key, created_at
+              request_letter_object_key, created_at
          FROM valuations WHERE id = $1 LIMIT 1`,
       [n],
     )
@@ -299,7 +299,7 @@ export class ValuationsService implements OnModuleInit {
       nic: row.applicant_nic as string,
       status: row.status as string,
       details: details as Record<string, string>,
-      hasRequestLetter: !!(row.request_letter_object_key || row.request_letter_data || row.request_letter_path),
+      hasRequestLetter: !!row.request_letter_object_key,
       createdAt: row.created_at as string,
     }
   }
@@ -309,18 +309,17 @@ export class ValuationsService implements OnModuleInit {
     const n = Number(rowId)
     if (!Number.isInteger(n)) return null
     const r = await this.db.query(
-      `SELECT request_letter_path, request_letter_name, request_letter_mime, request_letter_data, request_letter_object_key
+      `SELECT request_letter_name, request_letter_mime, request_letter_object_key
          FROM valuations WHERE id = $1 LIMIT 1`,
       [n],
     )
     const row = r.rows[0]
-    if (!row || (!row.request_letter_object_key && !row.request_letter_data && !row.request_letter_path)) return null
+    if (!row?.request_letter_object_key) return null
     const objectData = await this.storage.read(row.request_letter_object_key as string)
     return {
-      path: (row.request_letter_path as string) || '',
       fileName: (row.request_letter_name as string) || 'request-letter.pdf',
       mime: (row.request_letter_mime as string) || 'application/pdf',
-      data: objectData ?? (row.request_letter_data as Buffer | null) ?? null,
+      data: objectData,
     }
   }
 

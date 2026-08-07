@@ -100,13 +100,13 @@ export class SitePhotosService implements OnModuleInit {
 
   async attachment(projectId: string, photoType: string) {
     const r = await this.db.query(
-      `SELECT file_name, file_path, file_mime, file_data, object_key FROM site_photos
+      `SELECT file_name, file_mime, object_key FROM site_photos
         WHERE project_id = $1 AND photo_type = $2`,
       [(projectId ?? '').trim(), (photoType ?? '').trim()],
     )
     const p = r.rows[0]
-    if (!p || (!p.object_key && !p.file_data && !p.file_path)) return null
+    if (!p?.object_key) return null
     const objectData = await this.storage.read(p.object_key as string)
-    return { fileName: p.file_name as string, filePath: p.file_path as string, mime: (p.file_mime as string) || 'image/jpeg', data: objectData ?? p.file_data as Buffer }
+    return { fileName: p.file_name as string, mime: (p.file_mime as string) || 'image/jpeg', data: objectData }
   }
 }

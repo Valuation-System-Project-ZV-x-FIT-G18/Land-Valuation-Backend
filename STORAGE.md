@@ -1,19 +1,23 @@
 # Upload storage
 
-All new PDFs, images, and uploaded documents use hybrid object storage:
+All new PDFs, images, and uploaded documents use one private Supabase Storage bucket.
 
-- The original file is stored in Cloudflare R2 when the four `R2_*` environment variables are configured.
-- With no R2 configuration, development uploads are stored under `uploads/objects/`.
-- PostgreSQL stores the object key and metadata; it does not store new file bytes.
-- Existing `BYTEA` and legacy disk-path records remain readable during migration.
+- Supabase stores the original file.
+- Neon PostgreSQL stores its object key and metadata.
+- Database BLOB and local-directory storage are not used by active file flows.
+- Upload and download endpoints require all three `SUPABASE_*` environment variables.
 
-Create a private R2 bucket and an Object Read & Write API token, then set:
+## Setup
+
+1. Create a free project at https://supabase.com/dashboard.
+2. Open **Storage**, create a bucket named `land-valuation-private`, and keep it private.
+3. Open **Project Settings > API**.
+4. Copy the Project URL and the service-role secret into the backend `.env`:
 
 ```env
-R2_ACCOUNT_ID=
-R2_ACCESS_KEY_ID=
-R2_SECRET_ACCESS_KEY=
-R2_BUCKET_NAME=land-valuation-private
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_your_backend_secret
+SUPABASE_STORAGE_BUCKET=land-valuation-private
 ```
 
-Do not commit real credentials. Restart the backend after changing `.env`.
+The service-role key bypasses Storage policies. It must stay in the backend and must never be committed or exposed to the browser. Restart the backend after changing `.env`.

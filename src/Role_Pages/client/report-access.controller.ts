@@ -10,13 +10,9 @@ import {
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { memoryStorage } from 'multer'
-import { join } from 'path'
-import { existsSync } from 'fs'
 import type { Response } from 'express'
 import { ReportAccessService } from './report-access.service'
 import { PayDto, PaySlipDto, VerifySlipDto } from './dto/client.dto'
-
-const uploadDir = join(process.cwd(), 'uploads')
 
 @Controller('client')
 export class ReportAccessController {
@@ -63,10 +59,8 @@ export class ReportAccessController {
   async slip(@Query('projectId') projectId: string, @Res() res: Response) {
     const file = await this.service.slipFile(projectId ?? '')
     if (!file) { res.status(404).json({ error: 'No slip found.' }); return }
-    if (file.data) { res.setHeader('Content-Type', file.mime || 'application/octet-stream'); res.send(file.data); return }
-    const legacyPath = join(uploadDir, file.path)
-    if (!file.path || !existsSync(legacyPath)) { res.status(410).json({ error: 'This legacy payment slip is missing. Please upload it again.' }); return }
-    res.sendFile(legacyPath)
+    if (!file.data) { res.status(404).json({ error: 'Object not found in Supabase Storage.' }); return }
+    res.setHeader('Content-Type', file.mime || 'application/octet-stream'); res.send(file.data)
   }
 
   // GET /api/client/bank/projects?bankId=...

@@ -1,67 +1,59 @@
-import { Injectable, Logger } from '@nestjs/common'
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { randomUUID } from 'crypto'
-import { mkdir, readFile, writeFile } from 'fs/promises'
-import { dirname, join } from 'path'
 
-export type StoredUpload = { objectKey: string; databaseFallback: Buffer | null }
+export type StoredUpload = { objectKey: string; databaseFallback: null }
 
+// The original files live in one private Supabase Storage bucket. PostgreSQL
+// stores only the returned object key and ordinary metadata.
 @Injectable()
 export class ObjectStorageService {
   private readonly logger = new Logger(ObjectStorageService.name)
   private readonly bucket: string
-  private readonly client: S3Client | null
-  private readonly localRoot = join(process.cwd(), 'uploads', 'objects')
+  private readonly client: SupabaseClient | null
 
   constructor(config: ConfigService) {
-    const accountId = config.get<string>('R2_ACCOUNT_ID')?.trim()
-    const accessKeyId = config.get<string>('R2_ACCESS_KEY_ID')?.trim()
-    const secretAccessKey = config.get<string>('R2_SECRET_ACCESS_KEY')?.trim()
-    this.bucket = config.get<string>('R2_BUCKET_NAME')?.trim() ?? ''
-    this.client = accountId && accessKeyId && secretAccessKey && this.bucket
-      ? new S3Client({
-          region: 'auto',
-          endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
-          credentials: { accessKeyId, secretAccessKey },
+    const url = config.get<string>('SUPABASE_URL')?.trim()
+    const secretKey = config.get<string>('SUPABASE_SECRET_KEY')?.trim()
+    this.bucket = config.get<string>('SUPABASE_STORAGE_BUCKET')?.trim() ?? ''
+    this.client = url && secretKey && this.bucket
+      ? createClient(url, secretKey, {
+          auth: { persistSession: false, autoRefreshToken: false },
         })
       : null
-    if (!this.client) this.logger.warn('R2 is not configured; uploads will use local object storage.')
+    if (!this.client) {
+      this.logger.error('Supabase Storage is not configured. File uploads and downloads are disabled.')
+    }
   }
 
   isConfigured() { return !!this.client }
 
+  private requireClient(): SupabaseClient {
+    if (!this.client) {
+      throw new ServiceUnavailableException(
+        'Supabase Storage is not configured. Set SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_STORAGE_BUCKET.',
+      )
+    }
+    return this.client
+  }
+
   async store(file: Express.Multer.File, area: string): Promise<StoredUpload> {
     const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120)
     const objectKey = `${area}/${new Date().toISOString().slice(0, 10)}/${randomUUID()}-${safeName}`
-    if (!this.client) {
-      const localKey = `local/${objectKey}`
-      const target = join(this.localRoot, ...objectKey.split('/'))
-      await mkdir(dirname(target), { recursive: true })
-      await writeFile(target, file.buffer)
-      return { objectKey: localKey, databaseFallback: null }
-    }
-    await this.client.send(new PutObjectCommand({
-      Bucket: this.bucket,
-      Key: objectKey,
-      Body: file.buffer,
-      ContentType: file.mimetype || 'application/octet-stream',
-      ContentDisposition: `inline; filename="${safeName.replace(/"/g, '')}"`,
-      Metadata: { originalname: encodeURIComponent(file.originalname) },
-    }))
+    const { error } = await this.requireClient().storage.from(this.bucket).upload(objectKey, file.buffer, {
+      contentType: file.mimetype || 'application/octet-stream',
+      cacheControl: '3600',
+      upsert: false,
+    })
+    if (error) throw new ServiceUnavailableException(`File upload failed: ${error.message}`)
     return { objectKey, databaseFallback: null }
   }
 
   async read(objectKey?: string | null): Promise<Buffer | null> {
     if (!objectKey) return null
-    if (objectKey.startsWith('local/')) {
-      const relative = objectKey.slice('local/'.length)
-      if (!relative || relative.includes('..')) return null
-      try { return await readFile(join(this.localRoot, ...relative.split('/'))) } catch { return null }
-    }
-    if (!this.client) return null
-    const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: objectKey }))
-    if (!result.Body) return null
-    return Buffer.from(await result.Body.transformToByteArray())
+    const { data, error } = await this.requireClient().storage.from(this.bucket).download(objectKey)
+    if (error || !data) return null
+    return Buffer.from(await data.arrayBuffer())
   }
 }
