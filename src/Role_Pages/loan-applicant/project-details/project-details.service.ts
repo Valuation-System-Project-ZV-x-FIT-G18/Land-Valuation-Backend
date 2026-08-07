@@ -140,6 +140,48 @@ export class ProjectDetailsService implements OnModuleInit {
     return { ok: true }
   }
 
+  // Attach (or replace) one document on a draft. Only the draft's own
+  // applicant may upload to it.
+  async saveFile(
+    draftId: number,
+    nic: string,
+    docType: string,
+    file?: { originalname: string; filename: string },
+  ) {
+    const t = (docType ?? '').trim()
+    if (!Number.isInteger(draftId) || !t || !file) return { ok: false, error: 'Missing details or file.' }
+
+    const owns = await this.db.query(
+      `SELECT 1 FROM applicant_project_details WHERE id = $1 AND applicant_nic = $2`,
+      [draftId, (nic ?? '').trim()],
+    )
+    if (!owns.rows[0]) return { ok: false, error: 'Draft not found.' }
+
+    await this.db.query(
+      `INSERT INTO applicant_project_detail_files (draft_id, doc_type, file_name, file_path)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (draft_id, doc_type)
+       DO UPDATE SET file_name = EXCLUDED.file_name, file_path = EXCLUDED.file_path,
+                     created_at = now()`,
+      [draftId, t, file.originalname, file.filename],
+    )
+    return { ok: true }
+  }
+
+  // The stored file for one of a draft's documents (for download by the
+  // applicant or the coordinator reviewing it).
+  async attachment(draftId: number, docType: string) {
+    if (!Number.isInteger(draftId)) return null
+    const r = await this.db.query(
+      `SELECT file_name, file_path FROM applicant_project_detail_files
+        WHERE draft_id = $1 AND doc_type = $2`,
+      [draftId, (docType ?? '').trim()],
+    )
+    const f = r.rows[0]
+    if (!f || !f.file_path) return null
+    return { fileName: f.file_name as string, filePath: f.file_path as string }
+  }
+
   // Called once a project has actually been created from this draft, so it
   // doesn't silently get reused/auto-picked for a later, unrelated project.
   async markUsed(id: number) {

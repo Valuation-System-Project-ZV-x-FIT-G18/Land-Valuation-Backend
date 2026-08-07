@@ -1,6 +1,26 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common'
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+  Res,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common'
+import { FileInterceptor } from '@nestjs/platform-express'
+import { diskStorage } from 'multer'
+import { extname, join } from 'path'
+import { existsSync, mkdirSync } from 'fs'
+import type { Response } from 'express'
 import { ProjectDetailsService } from './project-details.service'
 import { CreateProjectDetailsDto, UpdateProjectDetailsDto } from './dto/project-details.dto'
+
+const uploadDir = join(process.cwd(), 'uploads')
+if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 
 @Controller('applicant/project-details')
 export class ProjectDetailsController {
@@ -13,10 +33,43 @@ export class ProjectDetailsController {
     return { drafts: await this.projectDetails.list(nic ?? '') }
   }
 
+  // GET /api/applicant/project-details/file?draftId=&docType=
+  @Get('file')
+  async file(
+    @Query('draftId') draftId: string,
+    @Query('docType') docType: string,
+    @Res() res: Response,
+  ) {
+    const f = await this.projectDetails.attachment(Number(draftId), docType ?? '')
+    if (!f) { res.status(404).json({ error: 'File not found.' }); return }
+    res.download(join(uploadDir, f.filePath), f.fileName)
+  }
+
   // POST /api/applicant/project-details — save a new draft.
   @Post()
   async create(@Body() dto: CreateProjectDetailsDto) {
     return this.projectDetails.create(dto.nic, dto.label ?? '', dto.data)
+  }
+
+  // POST /api/applicant/project-details/:id/file — attach/replace one
+  // document on a draft ({ nic, docType } + file).
+  @Post(':id/file')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: uploadDir,
+        filename: (_req, file, cb) =>
+          cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
+      }),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  async uploadFile(
+    @Param('id') id: string,
+    @Body() body: { nic?: string; docType?: string },
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.projectDetails.saveFile(Number(id), body.nic ?? '', body.docType ?? '', file)
   }
 
   // PUT /api/applicant/project-details/:id — update one of the applicant's own drafts.
