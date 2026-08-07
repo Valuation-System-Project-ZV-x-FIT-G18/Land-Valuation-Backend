@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { toStoredPhone, fromStoredPhone } from '../../Common_Pages/validation/patterns'
+import { ObjectStorageService } from '../../Common_Pages/storage/object-storage.service'
 
 export type User = {
   user_id: string
@@ -18,7 +19,7 @@ export type User = {
 export class UsersService implements OnModuleInit {
   private readonly logger = new Logger(UsersService.name)
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService, private readonly storage: ObjectStorageService) {}
 
   // Make sure the first-login flag column exists (safe to re-run).
   async onModuleInit() {
@@ -36,6 +37,7 @@ export class UsersService implements OnModuleInit {
       await this.db.query(
         `ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime VARCHAR(100) NOT NULL DEFAULT ''`,
       )
+      await this.db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
     } catch (err) {
       this.logger.error(`Could not ensure profile columns: ${(err as Error).message}`)
     }
@@ -106,13 +108,14 @@ export class UsersService implements OnModuleInit {
   // Save a newly-uploaded profile picture's bytes straight into the database.
   // `token` is just a cache-busting version string returned to the frontend
   // (it has no meaning on disk — there is no file anymore).
-  async setPhoto(userId: string, data: Buffer, mime: string, token: string) {
+  async setPhoto(userId: string, file: Express.Multer.File, token: string) {
+    const stored = await this.storage.store(file, `avatars/${userId}`)
     const result = await this.db.query(
       `UPDATE users
-          SET photo_data = $1, photo_mime = $2, photo_path = $3
-        WHERE user_id = $4
+          SET photo_data = $1, photo_mime = $2, photo_path = $3, photo_object_key = $4
+        WHERE user_id = $5
       RETURNING octet_length(photo_data) AS stored_bytes`,
-      [data, mime, token, userId],
+      [stored.databaseFallback, file.mimetype, token, stored.objectKey, userId],
     )
 
     if (result.rowCount !== 1) {
@@ -122,19 +125,20 @@ export class UsersService implements OnModuleInit {
     // Do not report a successful upload unless PostgreSQL confirms that the
     // complete payload was written to the BYTEA column.
     const storedBytes = Number(result.rows[0]?.stored_bytes ?? 0)
-    if (storedBytes !== data.length) {
+    if (!stored.objectKey && storedBytes !== file.size) {
       throw new Error('The profile picture was not stored completely.')
     }
   }
 
   // The stored profile-picture bytes + content type, for serving it back.
   async getPhoto(userId: string): Promise<{ data: Buffer; mime: string } | null> {
-    const r = await this.db.query(`SELECT photo_data, photo_mime FROM users WHERE user_id = $1`, [
+    const r = await this.db.query(`SELECT photo_data, photo_mime, photo_object_key FROM users WHERE user_id = $1`, [
       userId,
     ])
     const row = r.rows[0]
-    if (!row?.photo_data) return null
-    return { data: row.photo_data as Buffer, mime: (row.photo_mime as string) || 'image/jpeg' }
+    if (!row?.photo_object_key && !row?.photo_data) return null
+    const objectData = await this.storage.read(row.photo_object_key as string)
+    return { data: objectData ?? row.photo_data as Buffer, mime: (row.photo_mime as string) || 'image/jpeg' }
   }
 
   // Update the user's personal fields. Identity fields (user_id, role, nic) and

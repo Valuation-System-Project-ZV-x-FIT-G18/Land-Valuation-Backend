@@ -14,13 +14,12 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express'
 import { memoryStorage } from 'multer'
 import { join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync } from 'fs'
 import type { Response } from 'express'
 import { ProjectDetailsService } from './project-details.service'
 import { CreateProjectDetailsDto, UpdateProjectDetailsDto } from './dto/project-details.dto'
 
 const uploadDir = join(process.cwd(), 'uploads')
-if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 
 function sendFileResponse(
   res: Response,
@@ -28,14 +27,14 @@ function sendFileResponse(
 ) {
   if (file.data) {
     res.setHeader('Content-Type', file.mime || 'application/octet-stream')
-    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.fileName)}"`)
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`)
     res.send(file.data)
     return
   }
   if (file.filePath) {
     const path = join(uploadDir, file.filePath)
     if (!existsSync(path)) {
-      res.status(404).json({ error: 'File is no longer available. Please re-upload it.' })
+      res.status(410).json({ error: 'This legacy document is missing. Please upload it again.' })
       return
     }
     res.download(path, file.fileName)
@@ -48,14 +47,11 @@ function sendFileResponse(
 export class ProjectDetailsController {
   constructor(private readonly projectDetails: ProjectDetailsService) {}
 
-  // GET /api/applicant/project-details?nic=... — all of this applicant's
-  // drafts (used by their own Fill Form list and the coordinator's picker).
   @Get()
   async list(@Query('nic') nic: string) {
     return { drafts: await this.projectDetails.list(nic ?? '') }
   }
 
-  // GET /api/applicant/project-details/file?draftId=&docType=
   @Get('file')
   async file(
     @Query('draftId') draftId: string,
@@ -63,18 +59,18 @@ export class ProjectDetailsController {
     @Res() res: Response,
   ) {
     const f = await this.projectDetails.attachment(Number(draftId), docType ?? '')
-    if (!f) { res.status(404).json({ error: 'File not found.' }); return }
+    if (!f) {
+      res.status(404).json({ error: 'File not found.' })
+      return
+    }
     sendFileResponse(res, f)
   }
 
-  // POST /api/applicant/project-details — save a new draft.
   @Post()
   async create(@Body() dto: CreateProjectDetailsDto) {
     return this.projectDetails.create(dto.nic, dto.label ?? '', dto.data)
   }
 
-  // POST /api/applicant/project-details/:id/file — attach/replace one
-  // document on a draft ({ nic, docType } + file).
   @Post(':id/file')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -90,21 +86,16 @@ export class ProjectDetailsController {
     return this.projectDetails.saveFile(Number(id), body.nic ?? '', body.docType ?? '', file)
   }
 
-  // PUT /api/applicant/project-details/:id — update one of the applicant's own drafts.
   @Put(':id')
   async update(@Param('id') id: string, @Body() dto: UpdateProjectDetailsDto) {
     return this.projectDetails.update(Number(id), dto.nic, dto.label ?? '', dto.data)
   }
 
-  // DELETE /api/applicant/project-details/:id?nic=...
   @Delete(':id')
   async remove(@Param('id') id: string, @Query('nic') nic: string) {
     return this.projectDetails.remove(Number(id), nic ?? '')
   }
 
-  // POST /api/applicant/project-details/:id/use — the coordinator calls this
-  // once a project has actually been created from the draft, so it isn't
-  // silently reused for a later, unrelated project.
   @Post(':id/use')
   async markUsed(@Param('id') id: string) {
     return this.projectDetails.markUsed(Number(id))

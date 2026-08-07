@@ -76,7 +76,7 @@ export class AuthController {
     // Just a cache-busting token for the frontend's <img src> — has no
     // meaning on disk, since there is no file anymore.
     const token = `db-${Date.now()}-${Math.round(Math.random() * 1e9)}`
-    await this.users.setPhoto(dto.userId, file.buffer, file.mimetype, token)
+    await this.users.setPhoto(dto.userId, file, token)
     return { ok: true, photoPath: token }
   }
 

@@ -12,12 +12,11 @@ import type { Response } from 'express'
 import { FileFieldsInterceptor } from '@nestjs/platform-express'
 import { memoryStorage } from 'multer'
 import { join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync } from 'fs'
 import { ProjectsService } from './projects.service'
 import { CreateProjectDto } from './dto/create-project.dto'
 
 const uploadDir = join(process.cwd(), 'uploads')
-if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 
 function sendFileResponse(
   res: Response,
@@ -25,14 +24,16 @@ function sendFileResponse(
 ) {
   if (file.data) {
     res.setHeader('Content-Type', file.mime || 'application/octet-stream')
-    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.fileName)}"`)
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`)
     res.send(file.data)
     return
   }
   if (file.filePath) {
     const path = join(uploadDir, file.filePath)
     if (!existsSync(path)) {
-      res.status(404).json({ error: 'File is no longer available. Please re-upload it.' })
+      res.status(410).json({
+        error: 'This legacy file is no longer present on the server. Please upload it again.',
+      })
       return
     }
     res.sendFile(path)
@@ -57,28 +58,24 @@ const fileFields = [
 export class ProjectsController {
   constructor(private readonly projects: ProjectsService) {}
 
-  // GET /api/coordinator/projects/lookup?q=<nic or project id>
   @Get('lookup')
   async lookup(@Query('q') q: string) {
     const project = await this.projects.findByNicOrId(q ?? '')
     return { found: !!project, project: project ?? undefined }
   }
 
-  // GET /api/coordinator/projects/status?q=<nic or project id>
   @Get('status')
   async status(@Query('q') q: string) {
     const projects = await this.projects.listStatus(q ?? '')
     return { projects }
   }
 
-  // GET /api/coordinator/projects/details?projectId=...
   @Get('details')
   async details(@Query('projectId') projectId: string) {
     const res = await this.projects.details(projectId ?? '')
     return res ?? { error: 'Project not found.' }
   }
 
-  // GET /api/coordinator/projects/file?projectId=&type=surveyPlan
   @Get('file')
   async file(
     @Query('projectId') projectId: string,
@@ -86,11 +83,13 @@ export class ProjectsController {
     @Res() res: Response,
   ) {
     const f = await this.projects.fileAttachment(projectId ?? '', type ?? '')
-    if (!f) { res.status(404).json({ error: 'File not found.' }); return }
+    if (!f) {
+      res.status(404).json({ error: 'File not found.' })
+      return
+    }
     sendFileResponse(res, f)
   }
 
-  // POST /api/coordinator/projects  (multipart/form-data)
   @Post()
   @UseInterceptors(
     FileFieldsInterceptor(fileFields, {

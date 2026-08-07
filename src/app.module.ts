@@ -25,12 +25,14 @@ import { ManagerDraftsModule } from './Role_Pages/manager/drafts/manager-drafts.
 import { ReportAccessModule } from './Role_Pages/client/report-access.module'
 import { AiModule } from './Common_Pages/ai/ai.module'
 import { BanksModule } from './Role_Pages/coordinator/banks/banks.module'
+import { ObjectStorageModule } from './Common_Pages/storage/object-storage.module'
 
 // The root module. It wires together all the feature modules.
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }), // loads .env everywhere
     DatabaseModule, // PostgreSQL connection
+    ObjectStorageModule, // private Cloudflare R2 object storage
     MailModule, // email sending
     ContactModule, // /api/contact
     ValuationModule, // /api/valuation

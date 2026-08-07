@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
+import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
 import { projectFieldColumns } from './constants/project-fields'
 
 type Body = {
@@ -13,9 +14,6 @@ type Body = {
 }
 type Files = Record<string, Express.Multer.File[]>
 
-// Creates a land valuation project. Every form field is stored in its own column
-// (see project-fields.ts) for clear, queryable data; the full JSON is also kept
-// in the `details` column as a backup. Uploaded files go to project_files.
 @Injectable()
 export class ProjectsService implements OnModuleInit {
   private readonly logger = new Logger(ProjectsService.name)
@@ -24,29 +22,28 @@ export class ProjectsService implements OnModuleInit {
     private readonly db: DatabaseService,
     private readonly mail: MailService,
     private readonly notifications: NotificationsService,
+    private readonly storage: ObjectStorageService,
   ) {}
 
-  // Make sure every form field has its own column (safe to run repeatedly).
   async onModuleInit() {
     try {
       await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS file_data BYTEA`)
       await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS mime VARCHAR(100) NOT NULL DEFAULT ''`)
       await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS size INTEGER NOT NULL DEFAULT 0`)
+      await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
     } catch (err) {
-      this.logger.error(`Could not ensure project file columns: ${(err as Error).message}`)
+      this.logger.error(`Could not ensure project file storage: ${(err as Error).message}`)
     }
+
     for (const { column } of projectFieldColumns) {
       try {
-        await this.db.query(
-          `ALTER TABLE projects ADD COLUMN IF NOT EXISTS "${column}" TEXT NOT NULL DEFAULT ''`,
-        )
+        await this.db.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS "${column}" TEXT NOT NULL DEFAULT ''`)
       } catch (err) {
         this.logger.error(`Could not ensure column ${column}: ${(err as Error).message}`)
       }
     }
   }
 
-  // Find the most recent project for a given project id OR applicant NIC.
   async findByNicOrId(q: string) {
     const v = q.trim()
     if (!v) return null
@@ -63,8 +60,6 @@ export class ProjectsService implements OnModuleInit {
     return { projectId: row.project_id as string, nic: row.applicant_nic as string }
   }
 
-  // List projects for the Project Status page. With a query, returns every
-  // project for that NIC or the one matching Project ID; without, the latest 100.
   async listStatus(q: string) {
     const v = (q ?? '').trim()
     const cols = `p.project_id, p.applicant_nic, p.property_type, p.status, p.created_at,
@@ -83,8 +78,6 @@ export class ProjectsService implements OnModuleInit {
       projectId: row.project_id as string,
       nic: row.applicant_nic as string,
       propertyType: row.property_type as string,
-      // Once the fee is paid the valuation is complete — reflect that reliably
-      // even if the stored status column wasn't updated at payment time.
       status: row.paid ? 'Valuation Completed' : (row.status as string),
       createdAt: row.created_at as string,
     }))
@@ -100,11 +93,6 @@ export class ProjectsService implements OnModuleInit {
     }
 
     const nic = (body.applicantNic ?? '').trim()
-
-    // Build one INSERT: applicant NIC, the JSON backup, the lifecycle status,
-    // then every field column. project_id (e.g. 'pro001') comes from the default.
-    // The applicant was registered before this, so the project starts at the
-    // 'Project Created' stage of the lifecycle timeline.
     const columns = ['applicant_nic', 'details', 'status', ...projectFieldColumns.map((f) => f.column)]
     const params: unknown[] = [
       nic,
@@ -112,9 +100,7 @@ export class ProjectsService implements OnModuleInit {
       'Project Created',
       ...projectFieldColumns.map((f) => String(details[f.key] ?? '')),
     ]
-    const placeholders = columns.map((c, i) =>
-      c === 'details' ? `$${i + 1}::jsonb` : `$${i + 1}`,
-    )
+    const placeholders = columns.map((c, i) => (c === 'details' ? `$${i + 1}::jsonb` : `$${i + 1}`))
 
     const result = await this.db.query(
       `INSERT INTO projects (${columns.map((c) => `"${c}"`).join(', ')})
@@ -124,29 +110,21 @@ export class ProjectsService implements OnModuleInit {
     )
     const projectId = result.rows[0].project_id as string
 
-    // Save one row per uploaded document/photo.
     const uploadedTypes = new Set<string>()
     for (const [fieldName, list] of Object.entries(files ?? {})) {
       for (const f of list) {
+        if (!f.buffer?.length) throw new Error(`Document "${f.originalname}" was not received completely.`)
         uploadedTypes.add(fieldName)
+        const stored = await this.storage.store(f, `projects/${projectId}/${fieldName}`)
         await this.db.query(
-          `INSERT INTO project_files (project_id, file_type, file_name, file_path, mime, size)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           RETURNING id`,
-          [projectId, fieldName, f.originalname, f.filename ?? '', f.mimetype, f.size],
+          `INSERT INTO project_files
+             (project_id, file_type, file_name, file_path, mime, size, file_data, object_key)
+           VALUES ($1, $2, $3, '', $4, $5, $6, $7)`,
+          [projectId, fieldName, f.originalname, f.mimetype, f.size, stored.databaseFallback ?? f.buffer, stored.objectKey],
         )
-        await this.db.query(`UPDATE project_files SET file_data = $2 WHERE project_id = $1 AND file_type = $3 AND file_name = $4`, [
-          projectId,
-          f.buffer ?? null,
-          fieldName,
-          f.originalname,
-        ])
       }
     }
 
-    // If the coordinator used one of the applicant's submitted forms, copy
-    // its already-uploaded documents into this project. Manual uploads above
-    // win, so replacing a file in the coordinator form works as expected.
     const sourceDraftId = Number(body.sourceDraftId)
     let sourceTypes: string[] = []
     try {
@@ -154,37 +132,37 @@ export class ProjectsService implements OnModuleInit {
     } catch {
       sourceTypes = []
     }
-    sourceTypes = sourceTypes
-      .map((t) => String(t ?? '').trim())
-      .filter((t) => t && !uploadedTypes.has(t))
+    sourceTypes = sourceTypes.map((t) => String(t ?? '').trim()).filter((t) => t && !uploadedTypes.has(t))
+
     if (Number.isInteger(sourceDraftId) && sourceTypes.length) {
       const copied = await this.db.query(
-        `SELECT f.doc_type, f.file_name, f.file_path, f.file_mime, f.file_data
+        `SELECT f.doc_type, f.file_name, f.file_path, f.file_mime, f.file_data, f.object_key
            FROM applicant_project_detail_files f
            JOIN applicant_project_details d ON d.id = f.draft_id
           WHERE f.draft_id = $1
             AND d.applicant_nic = $2
-            AND f.doc_type = ANY($3)`,
+            AND f.doc_type = ANY($3)
+            AND (f.object_key <> '' OR f.file_data IS NOT NULL OR f.file_path <> '')`,
         [sourceDraftId, nic, sourceTypes],
       )
       for (const f of copied.rows) {
         await this.db.query(
-          `INSERT INTO project_files (project_id, file_type, file_name, file_path, mime, size, file_data)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          `INSERT INTO project_files (project_id, file_type, file_name, file_path, mime, size, file_data, object_key)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             projectId,
             f.doc_type,
             f.file_name,
-            f.file_path,
+            f.file_path ?? '',
             f.file_mime ?? '',
-            f.file_data ? Buffer.byteLength(f.file_data) : 0,
+            f.file_data ? Buffer.byteLength(f.file_data as Buffer) : 0,
             f.file_data ?? null,
+            f.object_key ?? '',
           ],
         )
       }
     }
 
-    // Notify the loan applicant and the requesting bank that it was created.
     await this.notifyProjectCreated(
       projectId,
       nic,
@@ -192,7 +170,6 @@ export class ProjectsService implements OnModuleInit {
       String(details.bankEmail ?? '').trim(),
     )
 
-    // In-system notification to the coordinator who created it.
     const coordinatorId = (body.coordinatorId ?? '').trim()
     if (coordinatorId) {
       await this.notifications.create(
@@ -204,15 +181,7 @@ export class ProjectsService implements OnModuleInit {
     return projectId
   }
 
-  // Email + in-system notify the loan applicant (address stored with their
-  // account) and the requesting bank (address entered on the form). Never
-  // blocks project creation.
-  private async notifyProjectCreated(
-    projectId: string,
-    nic: string,
-    ownerName: string,
-    bankEmail: string,
-  ) {
+  private async notifyProjectCreated(projectId: string, nic: string, ownerName: string, bankEmail: string) {
     let applicantEmail = ''
     try {
       const r = await this.db.query(
@@ -225,9 +194,7 @@ export class ProjectsService implements OnModuleInit {
     }
 
     if (applicantEmail) {
-      await this.mail.sendProjectCreated(applicantEmail, {
-        projectId, nic, ownerName, audience: 'applicant',
-      })
+      await this.mail.sendProjectCreated(applicantEmail, { projectId, nic, ownerName, audience: 'applicant' })
     }
     await this.notifications.create(
       nic,
@@ -235,11 +202,7 @@ export class ProjectsService implements OnModuleInit {
     )
 
     if (bankEmail) {
-      await this.mail.sendProjectCreated(bankEmail, {
-        projectId, nic, ownerName, audience: 'bank',
-      })
-      // Best-effort in-system notice, only if this address belongs to a
-      // registered bank login (its user_id is the branch code).
+      await this.mail.sendProjectCreated(bankEmail, { projectId, nic, ownerName, audience: 'bank' })
       const bankUserId = await this.notifications.resolveBankUserId(bankEmail)
       if (bankUserId) {
         await this.notifications.create(
@@ -250,7 +213,6 @@ export class ProjectsService implements OnModuleInit {
     }
   }
 
-  // Full stored details of a project + the list of uploaded documents.
   async details(projectId: string) {
     const p = (projectId ?? '').trim()
     const pr = await this.db.query(`SELECT applicant_nic, status, details, created_at FROM projects WHERE project_id = $1`, [p])
@@ -258,7 +220,9 @@ export class ProjectsService implements OnModuleInit {
     if (!row) return null
     const files = await this.db.query(
       `SELECT DISTINCT ON (file_type) file_type, file_name FROM project_files
-        WHERE project_id = $1 ORDER BY file_type, id DESC`,
+        WHERE project_id = $1
+          AND (object_key <> '' OR file_data IS NOT NULL OR file_path <> '')
+        ORDER BY file_type, id DESC`,
       [p],
     )
     return {
@@ -271,20 +235,20 @@ export class ProjectsService implements OnModuleInit {
     }
   }
 
-  // The latest uploaded file of a given type for a project (e.g. surveyPlan).
   async fileAttachment(projectId: string, fileType: string) {
     const r = await this.db.query(
-      `SELECT file_name, file_path, mime, file_data FROM project_files
+      `SELECT file_name, file_path, mime, file_data, object_key FROM project_files
         WHERE project_id = $1 AND file_type = $2 ORDER BY id DESC LIMIT 1`,
       [(projectId ?? '').trim(), (fileType ?? '').trim()],
     )
     const p = r.rows[0]
-    if (!p || (!p.file_data && !p.file_path)) return null
+    if (!p || (!p.object_key && !p.file_data && !p.file_path)) return null
+    const objectData = await this.storage.read(p.object_key as string)
     return {
       fileName: p.file_name as string,
-      filePath: p.file_path as string,
-      mime: p.mime as string,
-      data: p.file_data as Buffer | null,
+      filePath: (p.file_path as string) || '',
+      mime: (p.mime as string) || 'application/octet-stream',
+      data: objectData ?? (p.file_data as Buffer | null) ?? null,
     }
   }
 }
