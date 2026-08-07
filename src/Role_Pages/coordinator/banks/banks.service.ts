@@ -3,6 +3,7 @@ import * as bcrypt from 'bcryptjs'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
+import { findDuplicateUserField } from '../../../Common_Pages/database/unique-user-check'
 import { CreateBankDto } from './dto/create-bank.dto'
 
 // Registry of bank branches / officers who request valuations.
@@ -85,18 +86,26 @@ export class BanksService implements OnModuleInit {
       const branchCode = dto.branchCode.trim()
       const email = (dto.email ?? '').trim()
       try {
-        const password = `Bank@${Math.floor(1000 + Math.random() * 9000)}`
-        const hash = await bcrypt.hash(password, 10)
-        const ins = await this.db.query(
-          `INSERT INTO users (user_id, first_name, last_name, nic, role, email, password_hash, must_change_password)
-           VALUES ($1, $2, '', $3, 'Bank', $4, $5, true)
-           ON CONFLICT (user_id) DO NOTHING
-           RETURNING user_id`,
-          [branchCode, dto.bankName.trim(), dto.officerNic.trim(), email, hash],
-        )
-        // Only email when a NEW login was created and we have an address.
-        if (ins.rows.length && email) {
-          void this.mail.sendBankWelcome(email, branchCode, password, dto.bankName.trim())
+        // No two accounts may share a NIC or email — if the officer's NIC/email
+        // is already used by another account, skip creating this login (the
+        // bank record above is still saved either way).
+        const dup = await findDuplicateUserField(this.db, { nic: dto.officerNic, email })
+        if (dup) {
+          this.logger.warn(`Bank login not created: ${dup} already registered to another account.`)
+        } else {
+          const password = `Bank@${Math.floor(1000 + Math.random() * 9000)}`
+          const hash = await bcrypt.hash(password, 10)
+          const ins = await this.db.query(
+            `INSERT INTO users (user_id, first_name, last_name, nic, role, email, password_hash, must_change_password)
+             VALUES ($1, $2, '', $3, 'Bank', $4, $5, true)
+             ON CONFLICT (user_id) DO NOTHING
+             RETURNING user_id`,
+            [branchCode, dto.bankName.trim(), dto.officerNic.trim(), email, hash],
+          )
+          // Only email when a NEW login was created and we have an address.
+          if (ins.rows.length && email) {
+            void this.mail.sendBankWelcome(email, branchCode, password, dto.bankName.trim())
+          }
         }
       } catch (e) {
         this.logger.warn(`Bank login not created: ${(e as Error).message}`)

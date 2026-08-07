@@ -1,9 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common'
+import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import * as bcrypt from 'bcryptjs'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
+import { findDuplicateUserField } from '../../../Common_Pages/database/unique-user-check'
 import { RegisterApplicantDto } from './dto/register-applicant.dto'
+import { toStoredPhone } from '../../../Common_Pages/validation/patterns'
 
 // Loan applicants are stored in the shared `users` table with role 'Loan Applicant'.
 // The NIC is used as their user_id (login id for external login).
@@ -58,31 +60,45 @@ export class ApplicantsService {
 
   // Register a new loan applicant into the users table (user_id = NIC).
   async register(data: RegisterApplicantDto) {
+    // No two accounts (of any role) may share a NIC or email.
+    const dup = await findDuplicateUserField(this.db, { nic: data.nic, email: data.email })
+    if (dup === 'nic') throw new BadRequestException('That NIC is already registered to another account.')
+    if (dup === 'email') throw new BadRequestException('That email is already registered to another account.')
+
     const passwordHash = await bcrypt.hash(data.password, 10)
-    await this.db.query(
-      `INSERT INTO users
-         (user_id, first_name, last_name, initials, nic, role, email, phone,
-          date_of_birth, province, district, city, postal_code, address, password_hash,
-          must_change_password)
-       VALUES ($1, $2, $3, $4, $1, 'Loan Applicant', $5, $6, $7, $8, $9, $10, $11, $12, $13,
-          true)
-       ON CONFLICT (user_id) DO NOTHING`,
-      [
-        data.nic.trim(),
-        data.firstName.trim(),
-        data.lastName.trim(),
-        data.initials.trim(),
-        data.email.trim(),
-        data.phone.trim(),
-        data.dateOfBirth || null,
-        (data.province ?? '').trim(),
-        (data.district ?? '').trim(),
-        (data.city ?? '').trim(),
-        (data.postalCode ?? '').trim(),
-        (data.address ?? '').trim(),
-        passwordHash,
-      ],
-    )
+    try {
+      await this.db.query(
+        `INSERT INTO users
+           (user_id, first_name, last_name, initials, nic, role, email, phone,
+            date_of_birth, province, district, city, postal_code, address, password_hash,
+            must_change_password)
+         VALUES ($1, $2, $3, $4, $1, 'Loan Applicant', $5, $6, $7, $8, $9, $10, $11, $12, $13,
+            true)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [
+          data.nic.trim(),
+          data.firstName.trim(),
+          data.lastName.trim(),
+          data.initials.trim(),
+          data.email.trim(),
+          toStoredPhone(data.phone),
+          data.dateOfBirth || null,
+          (data.province ?? '').trim(),
+          (data.district ?? '').trim(),
+          (data.city ?? '').trim(),
+          (data.postalCode ?? '').trim(),
+          (data.address ?? '').trim(),
+          passwordHash,
+        ],
+      )
+    } catch (err) {
+      // Fallback for a race where two requests pass the pre-check at once —
+      // the DB's unique index is the final word.
+      if ((err as { code?: string }).code === '23505') {
+        throw new BadRequestException('That NIC or email is already registered to another account.')
+      }
+      throw err
+    }
 
     // Email + notification are best-effort — a mail/SMTP hiccup must NOT fail the
     // registration (the applicant is already saved above).

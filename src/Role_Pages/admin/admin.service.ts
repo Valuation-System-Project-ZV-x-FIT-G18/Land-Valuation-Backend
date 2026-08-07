@@ -2,8 +2,10 @@ import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/c
 import * as bcrypt from 'bcryptjs'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
+import { findDuplicateUserField } from '../../Common_Pages/database/unique-user-check'
 import { CreateRoleDto } from './dto/create-role.dto'
 import { UpdateUserDto } from './dto/update-user.dto'
+import { toStoredPhone } from '../../Common_Pages/validation/patterns'
 
 // Login-ID prefix for each staff role (matches the internal login page).
 const PREFIX: Record<string, string> = {
@@ -15,6 +17,10 @@ const PREFIX: Record<string, string> = {
   'Manager L3': 'ML3',
   Bank: 'Bnk',
 }
+
+// Roles the system only ever has ONE of. Technical Officer, Bank and Loan
+// Applicant are unlimited (any number of them can be registered).
+const SINGLETON_ROLES = ['Admin', 'Coordinator', 'Manager L1', 'Manager L2', 'Manager L3']
 
 // Admin actions: create new staff accounts.
 @Injectable()
@@ -35,6 +41,20 @@ export class AdminService implements OnModuleInit {
     } catch (err) {
       this.logger.error(`Could not ensure bank columns: ${(err as Error).message}`)
     }
+
+    // No two accounts (of any role) may share a NIC or email. Blank values are
+    // excluded so accounts without one (e.g. a Bank login with no email) don't
+    // collide with each other.
+    try {
+      await this.db.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS users_nic_unique ON users (nic) WHERE nic <> ''`,
+      )
+      await this.db.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email)) WHERE email <> ''`,
+      )
+    } catch (err) {
+      this.logger.error(`Could not ensure NIC/email uniqueness: ${(err as Error).message}`)
+    }
   }
 
   // Next login id for a role, e.g. Cor001 -> Cor002.
@@ -53,6 +73,16 @@ export class AdminService implements OnModuleInit {
   }
 
   async addRole(dto: CreateRoleDto) {
+    // Admin, Coordinator and each Manager level may only exist once system-wide.
+    if (SINGLETON_ROLES.includes(dto.role)) {
+      const existing = await this.db.query(`SELECT 1 FROM users WHERE role = $1 LIMIT 1`, [
+        dto.role,
+      ])
+      if (existing.rows.length) {
+        throw new BadRequestException(`A ${dto.role} account already exists. Only one is allowed.`)
+      }
+    }
+
     // A Bank logs in with its Branch Code, so that becomes its login ID; other
     // roles get an auto-generated prefixed ID (Cor001, TO001, ...).
     let userId: string
@@ -65,36 +95,50 @@ export class AdminService implements OnModuleInit {
     } else {
       userId = await this.nextUserId(dto.role)
     }
+    // No two accounts may share a NIC or email.
+    const dup = await findDuplicateUserField(this.db, { nic: dto.nic, email: dto.email })
+    if (dup === 'nic') throw new BadRequestException('That NIC is already registered to another account.')
+    if (dup === 'email') throw new BadRequestException('That email is already registered to another account.')
+
     const passwordHash = await bcrypt.hash(dto.password, 10)
 
     // must_change_password = true -> forced to change it on first login.
-    await this.db.query(
-      `INSERT INTO users
-         (user_id, first_name, last_name, initials, nic, role, email, phone,
-          date_of_birth, province, district, city, postal_code, address, branch_name, bank_name,
-          designation, password_hash, must_change_password)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,true)`,
-      [
-        userId,
-        dto.firstName.trim(),
-        dto.lastName.trim(),
-        (dto.initials ?? '').trim(),
-        dto.nic.trim(),
-        dto.role,
-        dto.email.trim(),
-        (dto.phone ?? '').trim(),
-        dto.dateOfBirth || null,
-        (dto.province ?? '').trim(),
-        (dto.district ?? '').trim(),
-        (dto.city ?? '').trim(),
-        (dto.postalCode ?? '').trim(),
-        (dto.address ?? '').trim(),
-        (dto.branchName ?? '').trim(),
-        (dto.bankName ?? '').trim(),
-        (dto.designation ?? '').trim(),
-        passwordHash,
-      ],
-    )
+    try {
+      await this.db.query(
+        `INSERT INTO users
+           (user_id, first_name, last_name, initials, nic, role, email, phone,
+            date_of_birth, province, district, city, postal_code, address, branch_name, bank_name,
+            designation, password_hash, must_change_password)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,true)`,
+        [
+          userId,
+          dto.firstName.trim(),
+          dto.lastName.trim(),
+          (dto.initials ?? '').trim(),
+          dto.nic.trim(),
+          dto.role,
+          dto.email.trim(),
+          toStoredPhone(dto.phone),
+          dto.dateOfBirth || null,
+          (dto.province ?? '').trim(),
+          (dto.district ?? '').trim(),
+          (dto.city ?? '').trim(),
+          (dto.postalCode ?? '').trim(),
+          (dto.address ?? '').trim(),
+          (dto.branchName ?? '').trim(),
+          (dto.bankName ?? '').trim(),
+          (dto.designation ?? '').trim(),
+          passwordHash,
+        ],
+      )
+    } catch (err) {
+      // Fallback for a race where two requests pass the pre-check at once —
+      // the DB's unique index is the final word.
+      if ((err as { code?: string }).code === '23505') {
+        throw new BadRequestException('That NIC or email is already registered to another account.')
+      }
+      throw err
+    }
 
     // Email the new staff member their login id + password.
     await this.mail.sendStaffWelcome(dto.email.trim(), userId, dto.password, dto.role)
@@ -125,6 +169,11 @@ export class AdminService implements OnModuleInit {
 
   // Edit a user's basic details (identity fields stay fixed).
   async updateUser(userId: string, dto: UpdateUserDto) {
+    if (dto.email?.trim()) {
+      const dup = await findDuplicateUserField(this.db, { email: dto.email }, userId)
+      if (dup === 'email') throw new BadRequestException('That email is already registered to another account.')
+    }
+
     await this.db.query(
       `UPDATE users SET first_name = $2, last_name = $3, email = $4, phone = $5,
               province = $6, district = $7, city = $8
@@ -134,7 +183,7 @@ export class AdminService implements OnModuleInit {
         dto.firstName.trim(),
         (dto.lastName ?? '').trim(),
         (dto.email ?? '').trim(),
-        (dto.phone ?? '').trim(),
+        toStoredPhone(dto.phone),
         (dto.province ?? '').trim(),
         (dto.district ?? '').trim(),
         (dto.city ?? '').trim(),

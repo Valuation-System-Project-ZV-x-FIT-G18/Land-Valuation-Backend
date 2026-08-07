@@ -65,6 +65,18 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS city          VARCHAR(80)  NOT NULL D
 -- Loan applicants get a temporary password by email; they must change it on
 -- first login. true = force the change-password screen before the dashboard.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false;
+-- Profile picture, stored in the database (not on disk): photo_data holds the
+-- raw image bytes, photo_mime its content type, and photo_path is repurposed
+-- as a cache-busting version token (a plain string, not a file path).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_path VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_data BYTEA;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime VARCHAR(100) NOT NULL DEFAULT '';
+
+-- No two accounts (of any role) may share a NIC or email. Blank values are
+-- excluded so accounts without one (e.g. a Bank login with no email) don't
+-- collide with each other.
+CREATE UNIQUE INDEX IF NOT EXISTS users_nic_unique ON users (nic) WHERE nic <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email)) WHERE email <> '';
 
 -- Sample staff rows (ON CONFLICT keeps this safe to run more than once).
 -- The password_hash below is bcrypt('Test@123') — FOR TESTING ONLY.
