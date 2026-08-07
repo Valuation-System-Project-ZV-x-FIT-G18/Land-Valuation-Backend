@@ -4,6 +4,13 @@ import { ObjectStorageService } from '../../../Common_Pages/storage/object-stora
 
 type Row = Record<string, unknown>
 
+// An applicant can have more than one project (e.g. two separate lands), so
+// they keep a LIST of drafts here — not just one. Each draft holds the same
+// field set as the coordinator's Create Project form (minus document
+// uploads). The coordinator picks which draft (if any) to start a new
+// project from; picking one doesn't lock it — it's only marked "Used" once
+// that project is actually created, so the same draft never gets silently
+// reused for an unrelated second project.
 @Injectable()
 export class ProjectDetailsService implements OnModuleInit {
   private readonly logger = new Logger(ProjectDetailsService.name)
@@ -12,6 +19,7 @@ export class ProjectDetailsService implements OnModuleInit {
 
   async onModuleInit() {
     try {
+      // Fresh install: create with the current (list) shape directly.
       await this.db.query(
         `CREATE TABLE IF NOT EXISTS applicant_project_details (
            id             SERIAL       PRIMARY KEY,
@@ -23,10 +31,18 @@ export class ProjectDetailsService implements OnModuleInit {
            updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
          )`,
       )
+      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS file_data BYTEA`)
+      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
+      // Migration: an earlier version of this table had applicant_nic as the
+      // PRIMARY KEY (one draft per applicant). Move to a proper id PK so an
+      // applicant can have several drafts; safe/idempotent to re-run.
       await this.db.query(`ALTER TABLE applicant_project_details ADD COLUMN IF NOT EXISTS id SERIAL`)
       await this.db.query(`ALTER TABLE applicant_project_details ADD COLUMN IF NOT EXISTS label VARCHAR(100) NOT NULL DEFAULT ''`)
       await this.db.query(`ALTER TABLE applicant_project_details ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'Pending'`)
       await this.db.query(`ALTER TABLE applicant_project_details ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
+      // Only replace the legacy NIC primary key. Do not drop the current id
+      // primary key because draft-file foreign keys depend on it.
       await this.db.query(`
         DO $$ BEGIN
           IF NOT EXISTS (
@@ -39,7 +55,13 @@ export class ProjectDetailsService implements OnModuleInit {
             ALTER TABLE applicant_project_details ADD CONSTRAINT applicant_project_details_pkey PRIMARY KEY (id);
           END IF;
         END $$`)
-      await this.db.query(`CREATE INDEX IF NOT EXISTS applicant_project_details_nic_idx ON applicant_project_details (applicant_nic)`)
+      await this.db.query(
+        `CREATE INDEX IF NOT EXISTS applicant_project_details_nic_idx ON applicant_project_details (applicant_nic)`,
+      )
+
+      // Documents attached to a draft (the same upload slots as the
+      // coordinator's Create Project form — survey plan, title deed, etc.).
+      // One file per (draft, doc type); re-uploading replaces it.
       await this.db.query(
         `CREATE TABLE IF NOT EXISTS applicant_project_detail_files (
            id         SERIAL       PRIMARY KEY,
@@ -47,16 +69,10 @@ export class ProjectDetailsService implements OnModuleInit {
            doc_type   VARCHAR(60)  NOT NULL,
            file_name  VARCHAR(255) NOT NULL DEFAULT '',
            file_path  VARCHAR(255) NOT NULL DEFAULT '',
-           file_mime  VARCHAR(100) NOT NULL DEFAULT '',
-           file_data  BYTEA,
-           object_key VARCHAR(1024) NOT NULL DEFAULT '',
            created_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
            UNIQUE (draft_id, doc_type)
          )`,
       )
-      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS file_data BYTEA`)
-      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
     } catch (err) {
       this.logger.error(`Applicant project details setup failed: ${(err as Error).message}`)
     }
@@ -72,6 +88,9 @@ export class ProjectDetailsService implements OnModuleInit {
     }
   }
 
+  // All of this applicant's drafts (each with its attached documents), newest
+  // first — used both by their own Fill Form list and the coordinator's
+  // picker for that NIC.
   async list(nic: string) {
     const n = (nic ?? '').trim()
     if (!n) return []
@@ -87,8 +106,7 @@ export class ProjectDetailsService implements OnModuleInit {
 
     const f = await this.db.query(
       `SELECT draft_id, doc_type, file_name FROM applicant_project_detail_files
-        WHERE draft_id = ANY($1)
-          AND (object_key <> '' OR file_data IS NOT NULL OR file_path <> '')`,
+        WHERE draft_id = ANY($1)`,
       [drafts.map((d) => d.id)],
     )
     const byDraft = new Map<number, { docType: string; fileName: string }[]>()
@@ -100,6 +118,7 @@ export class ProjectDetailsService implements OnModuleInit {
     return drafts.map((d) => ({ ...d, files: byDraft.get(d.id) ?? [] }))
   }
 
+  // Save a new draft.
   async create(nic: string, label: string, data: Record<string, string>) {
     const n = (nic ?? '').trim()
     if (!n) return { ok: false, error: 'Missing NIC.' }
@@ -114,6 +133,7 @@ export class ProjectDetailsService implements OnModuleInit {
     return { ok: true, id: Number(r.rows[0].id) }
   }
 
+  // Update an existing draft — only its own applicant may edit it.
   async update(id: number, nic: string, label: string, data: Record<string, string>) {
     if (!Number.isInteger(id)) return { ok: false, error: 'Draft not found.' }
     const r = await this.db.query(
@@ -125,6 +145,7 @@ export class ProjectDetailsService implements OnModuleInit {
     return { ok: true }
   }
 
+  // Delete a draft — only its own applicant may remove it.
   async remove(id: number, nic: string) {
     if (!Number.isInteger(id)) return { ok: false, error: 'Draft not found.' }
     const r = await this.db.query(
@@ -135,12 +156,16 @@ export class ProjectDetailsService implements OnModuleInit {
     return { ok: true }
   }
 
-  async saveFile(draftId: number, nic: string, docType: string, file?: Express.Multer.File) {
+  // Attach (or replace) one document on a draft. Only the draft's own
+  // applicant may upload to it.
+  async saveFile(
+    draftId: number,
+    nic: string,
+    docType: string,
+    file?: Express.Multer.File,
+  ) {
     const t = (docType ?? '').trim()
     if (!Number.isInteger(draftId) || !t || !file) return { ok: false, error: 'Missing details or file.' }
-    if (!file.buffer?.length) {
-      return { ok: false, error: 'The file content was not received. Please upload the file again.' }
-    }
 
     const owns = await this.db.query(
       `SELECT 1 FROM applicant_project_details WHERE id = $1 AND applicant_nic = $2`,
@@ -153,41 +178,30 @@ export class ProjectDetailsService implements OnModuleInit {
       `INSERT INTO applicant_project_detail_files (draft_id, doc_type, file_name, file_path, file_mime, file_data, object_key)
        VALUES ($1, $2, $3, '', $4, $5, $6)
        ON CONFLICT (draft_id, doc_type)
-       DO UPDATE SET file_name = EXCLUDED.file_name, file_path = '',
-                     file_mime = EXCLUDED.file_mime, file_data = EXCLUDED.file_data,
-                     object_key = EXCLUDED.object_key, created_at = now()`,
-      [draftId, t, file.originalname, file.mimetype ?? '', stored.databaseFallback ?? file.buffer, stored.objectKey],
+       DO UPDATE SET file_name = EXCLUDED.file_name, file_path = '', file_mime = EXCLUDED.file_mime, file_data = EXCLUDED.file_data, object_key = EXCLUDED.object_key,
+                     created_at = now()`,
+      [draftId, t, file.originalname, file.mimetype, stored.databaseFallback, stored.objectKey],
     )
     return { ok: true }
   }
 
+  // The stored file for one of a draft's documents (for download by the
+  // applicant or the coordinator reviewing it).
   async attachment(draftId: number, docType: string) {
     if (!Number.isInteger(draftId)) return null
     const r = await this.db.query(
-<<<<<<< HEAD
-      `SELECT file_name, file_path, file_mime, file_data, object_key
-         FROM applicant_project_detail_files
-=======
       `SELECT file_name, file_mime, object_key FROM applicant_project_detail_files
->>>>>>> b75f317 (Describe your changes)
         WHERE draft_id = $1 AND doc_type = $2`,
       [draftId, (docType ?? '').trim()],
     )
     const f = r.rows[0]
     if (!f?.object_key) return null
     const objectData = await this.storage.read(f.object_key as string)
-<<<<<<< HEAD
-    return {
-      fileName: f.file_name as string,
-      filePath: (f.file_path as string) || '',
-      mime: (f.file_mime as string) || 'application/octet-stream',
-      data: objectData ?? (f.file_data as Buffer | null) ?? null,
-    }
-=======
     return { fileName: f.file_name as string, mime: f.file_mime as string, data: objectData }
->>>>>>> b75f317 (Describe your changes)
   }
 
+  // Called once a project has actually been created from this draft, so it
+  // doesn't silently get reused/auto-picked for a later, unrelated project.
   async markUsed(id: number) {
     if (!Number.isInteger(id)) return { ok: false, error: 'Draft not found.' }
     const r = await this.db.query(
