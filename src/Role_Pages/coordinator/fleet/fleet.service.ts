@@ -252,6 +252,9 @@ export class FleetService implements OnModuleInit {
     if (!Number.isInteger(n)) return { ok: false, error: 'Invalid valuation.' }
     if (!toId.trim()) return { ok: false, error: 'Select a technical officer.' }
     if (!date.trim() || !time.trim()) return { ok: false, error: 'Pick a date and time.' }
+    if (time.trim() < '08:00' || time.trim() > '17:00') {
+      return { ok: false, error: 'Visit time must be between 8:00 AM and 5:00 PM.' }
+    }
 
     const v = await this.db.query(
       `UPDATE valuations
