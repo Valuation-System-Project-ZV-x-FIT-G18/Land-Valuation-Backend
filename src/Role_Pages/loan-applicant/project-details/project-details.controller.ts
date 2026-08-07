@@ -42,7 +42,8 @@ export class ProjectDetailsController {
   ) {
     const f = await this.projectDetails.attachment(Number(draftId), docType ?? '')
     if (!f) { res.status(404).json({ error: 'File not found.' }); return }
-    res.download(join(uploadDir, f.filePath), f.fileName)
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(f.fileName)}`)
+    res.sendFile(join(uploadDir, f.filePath))
   }
 
   // POST /api/applicant/project-details — save a new draft.

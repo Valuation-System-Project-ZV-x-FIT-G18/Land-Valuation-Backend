@@ -31,6 +31,11 @@ export class ProjectsService implements OnModuleInit {
         this.logger.error(`Could not ensure column ${column}: ${(err as Error).message}`)
       }
     }
+    try {
+      await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS file_data BYTEA`)
+    } catch (err) {
+      this.logger.error(`Could not ensure project file storage: ${(err as Error).message}`)
+    }
   }
 
   // Find the most recent project for a given project id OR applicant NIC.
@@ -111,14 +116,20 @@ export class ProjectsService implements OnModuleInit {
     )
     const projectId = result.rows[0].project_id as string
 
-    // Save one row per uploaded document/photo.
+    // Save one row per uploaded document/photo. memoryStorage supplies the
+    // complete bytes in `buffer`, which are persisted directly in PostgreSQL.
     for (const [fieldName, list] of Object.entries(files ?? {})) {
       for (const f of list) {
-        await this.db.query(
-          `INSERT INTO project_files (project_id, file_type, file_name, file_path, mime, size)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [projectId, fieldName, f.originalname, f.filename, f.mimetype, f.size],
+        const saved = await this.db.query(
+          `INSERT INTO project_files
+             (project_id, file_type, file_name, file_path, mime, size, file_data)
+           VALUES ($1, $2, $3, '', $4, $5, $6)
+           RETURNING octet_length(file_data) AS stored_bytes`,
+          [projectId, fieldName, f.originalname, f.mimetype, f.size, f.buffer],
         )
+        if (Number(saved.rows[0]?.stored_bytes ?? 0) !== f.size) {
+          throw new Error(`Document "${f.originalname}" was not stored completely.`)
+        }
       }
     }
 
@@ -212,12 +223,17 @@ export class ProjectsService implements OnModuleInit {
   // The latest uploaded file of a given type for a project (e.g. surveyPlan).
   async fileAttachment(projectId: string, fileType: string) {
     const r = await this.db.query(
-      `SELECT file_path FROM project_files
+      `SELECT file_name, file_path, mime, file_data FROM project_files
         WHERE project_id = $1 AND file_type = $2 ORDER BY id DESC LIMIT 1`,
       [(projectId ?? '').trim(), (fileType ?? '').trim()],
     )
     const p = r.rows[0]
-    if (!p || !p.file_path) return null
-    return { filePath: p.file_path as string }
+    if (!p || (!p.file_data && !p.file_path)) return null
+    return {
+      fileName: p.file_name as string,
+      filePath: (p.file_path as string) || '',
+      mime: (p.mime as string) || 'application/octet-stream',
+      data: (p.file_data as Buffer | null) ?? null,
+    }
   }
 }

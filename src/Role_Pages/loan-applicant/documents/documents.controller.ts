@@ -64,6 +64,7 @@ export class DocumentsController {
   ) {
     const f = await this.documents.attachment(nic ?? '', projectId ?? '', docType ?? '')
     if (!f) { res.status(404).json({ error: 'File not found.' }); return }
-    res.download(join(uploadDir, f.filePath), f.fileName)
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(f.fileName)}`)
+    res.sendFile(join(uploadDir, f.filePath))
   }
 }

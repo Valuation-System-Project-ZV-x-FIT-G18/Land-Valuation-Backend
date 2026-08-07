@@ -185,8 +185,13 @@ CREATE TABLE IF NOT EXISTS project_files (
   file_path   VARCHAR(255) NOT NULL,
   mime        VARCHAR(100) NOT NULL DEFAULT '',
   size        INTEGER      NOT NULL DEFAULT 0,
+  file_data   BYTEA,
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+-- Migration: project documents are stored in PostgreSQL rather than relying
+-- on the server's local filesystem.
+ALTER TABLE project_files ADD COLUMN IF NOT EXISTS file_data BYTEA;
 
 -- Valuations raised against a project.
 --   id           = surrogate PRIMARY KEY (one row per valuation).

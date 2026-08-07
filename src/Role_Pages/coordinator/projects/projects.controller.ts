@@ -10,14 +10,12 @@ import {
 } from '@nestjs/common'
 import type { Response } from 'express'
 import { FileFieldsInterceptor } from '@nestjs/platform-express'
-import { diskStorage } from 'multer'
-import { extname, join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { memoryStorage } from 'multer'
+import { join } from 'path'
 import { ProjectsService } from './projects.service'
 import { CreateProjectDto } from './dto/create-project.dto'
 
 const uploadDir = join(process.cwd(), 'uploads')
-if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 
 const fileFields = [
   { name: 'surveyPlan', maxCount: 1 },
@@ -65,6 +63,13 @@ export class ProjectsController {
   ) {
     const f = await this.projects.fileAttachment(projectId ?? '', type ?? '')
     if (!f) { res.status(404).json({ error: 'File not found.' }); return }
+    if (f.data) {
+      res.setHeader('Content-Type', f.mime || 'application/octet-stream')
+      res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(f.fileName)}`)
+      res.send(f.data)
+      return
+    }
+    // Backward compatibility for documents uploaded before database storage.
     res.sendFile(join(uploadDir, f.filePath))
   }
 
@@ -72,11 +77,7 @@ export class ProjectsController {
   @Post()
   @UseInterceptors(
     FileFieldsInterceptor(fileFields, {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (_req, file, cb) =>
-          cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 5 * 1024 * 1024 },
     }),
   )
