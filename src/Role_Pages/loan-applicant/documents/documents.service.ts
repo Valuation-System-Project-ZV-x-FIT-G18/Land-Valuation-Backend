@@ -67,7 +67,9 @@ export class DocumentsService implements OnModuleInit {
     }))
   }
 
-  // Upload (or replace) one document for a project.
+  // Upload (or replace) one document. `projectId` may be blank — that's the
+  // "general" bucket used before a coordinator has created a project for
+  // this applicant yet (right after registration).
   async upload(
     nic: string,
     projectId: string,
@@ -77,7 +79,7 @@ export class DocumentsService implements OnModuleInit {
     const n = (nic ?? '').trim()
     const p = (projectId ?? '').trim()
     const t = (docType ?? '').trim()
-    if (!n || !p || !t || !file) return { ok: false, error: 'Missing details or file.' }
+    if (!n || !t || !file) return { ok: false, error: 'Missing details or file.' }
 
     await this.db.query(
       `INSERT INTO applicant_documents (applicant_nic, project_id, doc_type, file_name, file_path, status)
@@ -97,7 +99,7 @@ export class DocumentsService implements OnModuleInit {
     const p = (projectId ?? '').trim()
     const t = (docType ?? '').trim()
     const s = (status ?? '').trim()
-    if (!n || !p || !t || !s) return { ok: false, error: 'Missing details.' }
+    if (!n || !t || !s) return { ok: false, error: 'Missing details.' }
 
     const r = await this.db.query(
       `UPDATE applicant_documents SET status = $4
@@ -106,9 +108,10 @@ export class DocumentsService implements OnModuleInit {
     )
     if (!r.rowCount) return { ok: false, error: 'Document not found.' }
 
+    const forProject = p ? ` for project ${p}` : ''
     await this.notifications.create(
       n,
-      `Your document "${label || t}" for project ${p} was marked "${s}" by the coordinator.`,
+      `Your document "${label || t}"${forProject} was marked "${s}" by the coordinator.`,
     )
     return { ok: true }
   }

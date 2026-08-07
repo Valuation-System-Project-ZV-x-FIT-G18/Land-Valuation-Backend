@@ -18,6 +18,16 @@ const pool = new pg.Pool({
 
 const tables = [
   'to_leaves',
+  'site_photos',
+  'notifications',
+  'messages',
+  'applicant_documents',
+  'land_analyses',
+  'banks',
+  'map_analyses',
+  'drafts',
+  'descriptions',
+  'inspections',
   'valuations',
   'project_files',
   'projects',
@@ -27,8 +37,24 @@ const tables = [
 ]
 
 async function main() {
+  // Only truncate tables that actually exist — some are created lazily by the
+  // app's onModuleInit hooks, so a fresh/partial DB may not have them all yet.
+  const existing = await pool.query(
+    `SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = ANY($1::text[])`,
+    [tables],
+  )
+  const present = existing.rows.map((r) => r.table_name)
+  const missing = tables.filter((t) => !present.includes(t))
+  if (missing.length) console.log('Skipping tables not present yet:', missing.join(', '))
+  if (!present.length) {
+    console.log('No known tables found. Nothing to wipe.')
+    await pool.end()
+    return
+  }
+
   // CASCADE handles foreign keys; RESTART IDENTITY resets serial/identity ids.
-  await pool.query(`TRUNCATE ${tables.join(', ')} RESTART IDENTITY CASCADE`)
+  await pool.query(`TRUNCATE ${present.join(', ')} RESTART IDENTITY CASCADE`)
 
   // Reset the human-readable id sequences (pro001, val001) back to the start.
   for (const seq of ['project_seq', 'valuation_seq']) {

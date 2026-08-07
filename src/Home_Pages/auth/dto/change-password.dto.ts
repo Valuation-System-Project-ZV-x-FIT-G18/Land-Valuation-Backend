@@ -1,4 +1,5 @@
-import { IsString, MaxLength, MinLength } from 'class-validator'
+import { IsString, Matches, MaxLength, MinLength } from 'class-validator'
+import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_PATTERN } from '../../../Common_Pages/validation/patterns'
 
 export class ChangePasswordDto {
   @IsString()
@@ -12,7 +13,7 @@ export class ChangePasswordDto {
   currentPassword: string
 
   @IsString()
-  @MinLength(8, { message: 'New password must be at least 8 characters.' })
   @MaxLength(100)
+  @Matches(STRONG_PASSWORD_PATTERN, { message: STRONG_PASSWORD_MESSAGE })
   newPassword: string
 }

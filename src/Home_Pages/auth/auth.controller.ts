@@ -10,9 +10,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
-import { diskStorage } from 'multer'
-import { extname, join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { memoryStorage } from 'multer'
 import type { Response } from 'express'
 import { AuthService } from './auth.service'
 import { UsersService } from './users.service'
@@ -21,9 +19,6 @@ import { ChangePasswordDto } from './dto/change-password.dto'
 import { UpdateProfileDto } from './dto/update-profile.dto'
 import { ForgotPasswordDto } from './dto/forgot-password.dto'
 import { UploadAvatarDto } from './dto/upload-avatar.dto'
-
-const uploadDir = join(process.cwd(), 'uploads')
-if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 
 @Controller('auth')
 export class AuthController {
@@ -67,28 +62,27 @@ export class AuthController {
   }
 
   // POST /api/auth/avatar — upload/replace the logged-in user's profile picture.
+  // memoryStorage() keeps the file in memory (file.buffer) instead of writing
+  // it to disk, so the bytes go straight into the database.
   @Post('avatar')
   @UseInterceptors(
-    FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (_req, file, cb) =>
-          cb(null, `avatar-${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
-      }),
-      limits: { fileSize: 5 * 1024 * 1024 },
-    }),
+    FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }),
   )
   async uploadAvatar(@Body() dto: UploadAvatarDto, @UploadedFile() file?: Express.Multer.File) {
     if (!file) return { ok: false, error: 'No image was received.' }
-    await this.users.setPhoto(dto.userId, file.filename)
-    return { ok: true, photoPath: file.filename }
+    // Just a cache-busting token for the frontend's <img src> — has no
+    // meaning on disk, since there is no file anymore.
+    const token = `db-${Date.now()}-${Math.round(Math.random() * 1e9)}`
+    await this.users.setPhoto(dto.userId, file.buffer, file.mimetype, token)
+    return { ok: true, photoPath: token }
   }
 
-  // GET /api/auth/avatar?userId=... — serve the stored profile picture.
+  // GET /api/auth/avatar?userId=... — serve the stored profile picture from the database.
   @Get('avatar')
   async avatar(@Query('userId') userId: string, @Res() res: Response) {
-    const fileName = await this.users.getPhotoPath(userId ?? '')
-    if (!fileName) { res.status(404).json({ error: 'No profile picture set.' }); return }
-    res.sendFile(join(uploadDir, fileName))
+    const photo = await this.users.getPhoto(userId ?? '')
+    if (!photo) { res.status(404).json({ error: 'No profile picture set.' }); return }
+    res.set('Content-Type', photo.mime)
+    res.send(photo.data)
   }
 }

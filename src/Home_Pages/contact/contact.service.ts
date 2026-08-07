@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
 import { CreateContactDto } from './dto/create-contact.dto'
+import { toStoredPhone } from '../../Common_Pages/validation/patterns'
 
 // Business logic for contact messages (the "service" layer).
 @Injectable()
@@ -18,7 +19,7 @@ export class ContactService {
       [
         dto.name.trim(),
         dto.email.trim(),
-        '+94' + dto.phone.trim(), // store the full number
+        toStoredPhone(dto.phone), // store the full number
         dto.message.trim(),
       ],
     )

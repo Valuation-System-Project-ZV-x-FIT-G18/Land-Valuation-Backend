@@ -45,13 +45,13 @@ export class DocumentsController {
     @Body() dto: UploadDocumentDto,
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.documents.upload(dto.nic, dto.projectId, dto.docType, file)
+    return this.documents.upload(dto.nic, dto.projectId ?? '', dto.docType, file)
   }
 
   // POST /api/applicant/documents/status
   @Post('status')
   async setStatus(@Body() dto: SetDocumentStatusDto) {
-    return this.documents.setStatus(dto.nic, dto.projectId, dto.docType, dto.status, dto.label ?? '')
+    return this.documents.setStatus(dto.nic, dto.projectId ?? '', dto.docType, dto.status, dto.label ?? '')
   }
 
   // GET /api/applicant/documents/file?nic=&projectId=&docType=

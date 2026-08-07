@@ -11,7 +11,7 @@ export class CreateContactDto {
   email: string
 
   @Matches(/^7[1-9]\d{7}$/, {
-    message: 'Enter a valid number: 9 digits (e.g. 771234567).',
+    message: 'Enter a valid 9-digit mobile number starting with 7 (e.g. 712345678).',
   })
   phone: string
 

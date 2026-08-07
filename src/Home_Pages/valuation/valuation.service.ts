@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
 import { CreateValuationDto } from './dto/create-valuation.dto'
+import { toStoredPhone } from '../../Common_Pages/validation/patterns'
 
 // Business logic for valuation requests.
 @Injectable()
@@ -17,7 +18,7 @@ export class ValuationService {
        VALUES ($1, $2, $3, $4, $5)`,
       [
         dto.name.trim(),
-        '+94' + dto.phone.trim(),
+        toStoredPhone(dto.phone),
         dto.email.trim(),
         dto.nic.trim().toUpperCase(),
         dto.message.trim(),

@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
+import { toStoredPhone, fromStoredPhone } from '../../Common_Pages/validation/patterns'
 
 export type User = {
   user_id: string
@@ -27,6 +28,13 @@ export class UsersService implements OnModuleInit {
       )
       await this.db.query(
         `ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_path VARCHAR(255) NOT NULL DEFAULT ''`,
+      )
+      // The profile picture itself lives in the database (not on disk):
+      // photo_data holds the raw bytes, photo_mime its content type. photo_path
+      // is repurposed as a cache-busting version token (still just a string).
+      await this.db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_data BYTEA`)
+      await this.db.query(
+        `ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime VARCHAR(100) NOT NULL DEFAULT ''`,
       )
     } catch (err) {
       this.logger.error(`Could not ensure profile columns: ${(err as Error).message}`)
@@ -84,7 +92,7 @@ export class UsersService implements OnModuleInit {
       lastName: u.last_name as string,
       initials: u.initials as string,
       email: u.email as string,
-      phone: u.phone as string,
+      phone: fromStoredPhone(u.phone as string),
       dateOfBirth: (u.date_of_birth as string) ?? '',
       province: u.province as string,
       district: u.district as string,
@@ -95,15 +103,24 @@ export class UsersService implements OnModuleInit {
     }
   }
 
-  // Save the file name of a newly-uploaded profile picture.
-  async setPhoto(userId: string, fileName: string) {
-    await this.db.query(`UPDATE users SET photo_path = $1 WHERE user_id = $2`, [fileName, userId])
+  // Save a newly-uploaded profile picture's bytes straight into the database.
+  // `token` is just a cache-busting version string returned to the frontend
+  // (it has no meaning on disk — there is no file anymore).
+  async setPhoto(userId: string, data: Buffer, mime: string, token: string) {
+    await this.db.query(
+      `UPDATE users SET photo_data = $1, photo_mime = $2, photo_path = $3 WHERE user_id = $4`,
+      [data, mime, token, userId],
+    )
   }
 
-  // The stored file name for a user's profile picture (for serving it back).
-  async getPhotoPath(userId: string): Promise<string> {
-    const r = await this.db.query(`SELECT photo_path FROM users WHERE user_id = $1`, [userId])
-    return (r.rows[0]?.photo_path as string) ?? ''
+  // The stored profile-picture bytes + content type, for serving it back.
+  async getPhoto(userId: string): Promise<{ data: Buffer; mime: string } | null> {
+    const r = await this.db.query(`SELECT photo_data, photo_mime FROM users WHERE user_id = $1`, [
+      userId,
+    ])
+    const row = r.rows[0]
+    if (!row?.photo_data) return null
+    return { data: row.photo_data as Buffer, mime: (row.photo_mime as string) || 'image/jpeg' }
   }
 
   // Update the user's personal fields. Identity fields (user_id, role, nic) and
@@ -136,7 +153,7 @@ export class UsersService implements OnModuleInit {
         (d.lastName ?? '').trim(),
         (d.initials ?? '').trim(),
         (d.email ?? '').trim(),
-        (d.phone ?? '').trim(),
+        toStoredPhone(d.phone),
         d.dateOfBirth || null,
         (d.province ?? '').trim(),
         (d.district ?? '').trim(),

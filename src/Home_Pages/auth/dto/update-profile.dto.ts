@@ -1,4 +1,5 @@
-import { IsEmail, IsISO8601, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator'
+import { IsEmail, IsISO8601, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator'
+import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, PHONE_MESSAGE, PHONE_PATTERN } from '../../../Common_Pages/validation/patterns'
 
 export class UpdateProfileDto {
   @IsString()
@@ -6,8 +7,12 @@ export class UpdateProfileDto {
   @MaxLength(50)
   userId: string
 
-  @IsOptional() @IsString() @MaxLength(60) firstName?: string
-  @IsOptional() @IsString() @MaxLength(60) lastName?: string
+  @IsOptional() @IsString() @MaxLength(60)
+  @Matches(NAME_PATTERN, { message: NAME_MESSAGE }) firstName?: string
+
+  @IsOptional() @IsString() @MaxLength(60)
+  @Matches(NAME_PATTERN, { message: NAME_MESSAGE }) lastName?: string
+
   @IsOptional() @IsString() @MaxLength(60) initials?: string
 
   @IsOptional()
@@ -16,16 +21,19 @@ export class UpdateProfileDto {
   email?: string
 
   @IsOptional()
-  @Matches(/^07\d{8}$/, { message: 'Enter a valid mobile number (e.g. 0771234567).' })
+  @Matches(PHONE_PATTERN, { message: PHONE_MESSAGE })
   phone?: string
 
-  @IsOptional()
+  // @IsOptional() only skips null/undefined, not '' — use @ValidateIf so a
+  // blank date is genuinely skipped instead of failing IsISO8601.
+  @ValidateIf((o) => !!o.dateOfBirth)
   @IsISO8601({}, { message: 'Date of birth must be a valid date (YYYY-MM-DD).' })
   dateOfBirth?: string
 
   @IsOptional() @IsString() @MaxLength(60) province?: string
   @IsOptional() @IsString() @MaxLength(60) district?: string
-  @IsOptional() @IsString() @MaxLength(60) city?: string
+  @IsOptional() @IsString() @MaxLength(60)
+  @Matches(CITY_PATTERN, { message: CITY_MESSAGE }) city?: string
   @IsOptional() @IsString() @MaxLength(10) postalCode?: string
   @IsOptional() @IsString() @MaxLength(255) address?: string
 }
