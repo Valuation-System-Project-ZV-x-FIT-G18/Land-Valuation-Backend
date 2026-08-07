@@ -5,5 +5,7 @@ import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator'
 export class CreateProjectDto {
   @IsString() @MinLength(1) @MaxLength(20) applicantNic: string
   @IsOptional() @IsString() @MaxLength(20) coordinatorId?: string
+  @IsOptional() @IsString() @MaxLength(20) sourceDraftId?: string
+  @IsOptional() @IsString() sourceDraftFileTypes?: string
   @IsOptional() @IsString() data?: string
 }

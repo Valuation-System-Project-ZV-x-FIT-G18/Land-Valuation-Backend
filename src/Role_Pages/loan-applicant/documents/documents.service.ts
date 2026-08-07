@@ -24,12 +24,18 @@ export class DocumentsService implements OnModuleInit {
            doc_type      VARCHAR(60)  NOT NULL,
            file_name     VARCHAR(255) NOT NULL DEFAULT '',
            file_path     VARCHAR(255) NOT NULL DEFAULT '',
+           mime          VARCHAR(100) NOT NULL DEFAULT '',
+           size          INTEGER      NOT NULL DEFAULT 0,
+           file_data     BYTEA,
            status        VARCHAR(30)  NOT NULL DEFAULT 'Submitted',
            created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
            UNIQUE (applicant_nic, doc_type)
          )`,
       )
       await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS project_id VARCHAR(20) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS mime VARCHAR(100) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS size INTEGER NOT NULL DEFAULT 0`)
+      await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS file_data BYTEA`)
       // Existing rows predate per-project documents — attach them to that
       // applicant's earliest project so nothing already uploaded is lost.
       await this.db.query(
@@ -74,20 +80,33 @@ export class DocumentsService implements OnModuleInit {
     nic: string,
     projectId: string,
     docType: string,
-    file?: { originalname: string; filename: string },
+    file?: { originalname: string; filename?: string; mimetype?: string; size?: number; buffer?: Buffer },
   ) {
     const n = (nic ?? '').trim()
     const p = (projectId ?? '').trim()
     const t = (docType ?? '').trim()
     if (!n || !t || !file) return { ok: false, error: 'Missing details or file.' }
+    if (!file.buffer?.length && !file.filename) {
+      return { ok: false, error: 'The file content was not received. Please upload the file again.' }
+    }
 
     await this.db.query(
-      `INSERT INTO applicant_documents (applicant_nic, project_id, doc_type, file_name, file_path, status)
-       VALUES ($1, $2, $3, $4, $5, 'Submitted')
+      `INSERT INTO applicant_documents (applicant_nic, project_id, doc_type, file_name, file_path, mime, size, file_data, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Submitted')
        ON CONFLICT (applicant_nic, project_id, doc_type)
        DO UPDATE SET file_name = EXCLUDED.file_name, file_path = EXCLUDED.file_path,
+                     mime = EXCLUDED.mime, size = EXCLUDED.size, file_data = EXCLUDED.file_data,
                      status = 'Submitted', created_at = now()`,
-      [n, p, t, file.originalname, file.filename],
+      [
+        n,
+        p,
+        t,
+        file.originalname,
+        file.filename ?? '',
+        file.mimetype ?? '',
+        file.size ?? file.buffer?.length ?? 0,
+        file.buffer ?? null,
+      ],
     )
     return { ok: true }
   }
@@ -119,12 +138,17 @@ export class DocumentsService implements OnModuleInit {
   // The stored file for a document (for download).
   async attachment(nic: string, projectId: string, docType: string) {
     const r = await this.db.query(
-      `SELECT file_name, file_path FROM applicant_documents
+      `SELECT file_name, file_path, mime, file_data FROM applicant_documents
         WHERE applicant_nic = $1 AND project_id = $2 AND doc_type = $3`,
       [(nic ?? '').trim(), (projectId ?? '').trim(), (docType ?? '').trim()],
     )
     const d = r.rows[0]
-    if (!d || !d.file_path) return null
-    return { fileName: d.file_name as string, filePath: d.file_path as string }
+    if (!d || (!d.file_data && !d.file_path)) return null
+    return {
+      fileName: d.file_name as string,
+      filePath: d.file_path as string,
+      mime: d.mime as string,
+      data: d.file_data as Buffer | null,
+    }
   }
 }

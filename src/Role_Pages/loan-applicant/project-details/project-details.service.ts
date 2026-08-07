@@ -53,10 +53,14 @@ export class ProjectDetailsService implements OnModuleInit {
            doc_type   VARCHAR(60)  NOT NULL,
            file_name  VARCHAR(255) NOT NULL DEFAULT '',
            file_path  VARCHAR(255) NOT NULL DEFAULT '',
+           file_mime  VARCHAR(100) NOT NULL DEFAULT '',
+           file_data  BYTEA,
            created_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
            UNIQUE (draft_id, doc_type)
          )`,
       )
+      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS file_data BYTEA`)
     } catch (err) {
       this.logger.error(`Applicant project details setup failed: ${(err as Error).message}`)
     }
@@ -90,7 +94,8 @@ export class ProjectDetailsService implements OnModuleInit {
 
     const f = await this.db.query(
       `SELECT draft_id, doc_type, file_name FROM applicant_project_detail_files
-        WHERE draft_id = ANY($1)`,
+        WHERE draft_id = ANY($1)
+          AND (file_data IS NOT NULL OR file_path <> '')`,
       [drafts.map((d) => d.id)],
     )
     const byDraft = new Map<number, { docType: string; fileName: string }[]>()
@@ -146,10 +151,13 @@ export class ProjectDetailsService implements OnModuleInit {
     draftId: number,
     nic: string,
     docType: string,
-    file?: { originalname: string; filename: string },
+    file?: { originalname: string; filename?: string; mimetype?: string; size?: number; buffer?: Buffer },
   ) {
     const t = (docType ?? '').trim()
     if (!Number.isInteger(draftId) || !t || !file) return { ok: false, error: 'Missing details or file.' }
+    if (!file.buffer?.length && !file.filename) {
+      return { ok: false, error: 'The file content was not received. Please upload the file again.' }
+    }
 
     const owns = await this.db.query(
       `SELECT 1 FROM applicant_project_details WHERE id = $1 AND applicant_nic = $2`,
@@ -158,12 +166,20 @@ export class ProjectDetailsService implements OnModuleInit {
     if (!owns.rows[0]) return { ok: false, error: 'Draft not found.' }
 
     await this.db.query(
-      `INSERT INTO applicant_project_detail_files (draft_id, doc_type, file_name, file_path)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO applicant_project_detail_files (draft_id, doc_type, file_name, file_path, file_mime, file_data)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (draft_id, doc_type)
        DO UPDATE SET file_name = EXCLUDED.file_name, file_path = EXCLUDED.file_path,
+                     file_mime = EXCLUDED.file_mime, file_data = EXCLUDED.file_data,
                      created_at = now()`,
-      [draftId, t, file.originalname, file.filename],
+      [
+        draftId,
+        t,
+        file.originalname,
+        file.filename ?? '',
+        file.mimetype ?? '',
+        file.buffer ?? null,
+      ],
     )
     return { ok: true }
   }
@@ -173,13 +189,18 @@ export class ProjectDetailsService implements OnModuleInit {
   async attachment(draftId: number, docType: string) {
     if (!Number.isInteger(draftId)) return null
     const r = await this.db.query(
-      `SELECT file_name, file_path FROM applicant_project_detail_files
+      `SELECT file_name, file_path, file_mime, file_data FROM applicant_project_detail_files
         WHERE draft_id = $1 AND doc_type = $2`,
       [draftId, (docType ?? '').trim()],
     )
     const f = r.rows[0]
-    if (!f || !f.file_path) return null
-    return { fileName: f.file_name as string, filePath: f.file_path as string }
+    if (!f || (!f.file_data && !f.file_path)) return null
+    return {
+      fileName: f.file_name as string,
+      filePath: f.file_path as string,
+      mime: f.file_mime as string,
+      data: f.file_data as Buffer | null,
+    }
   }
 
   // Called once a project has actually been created from this draft, so it

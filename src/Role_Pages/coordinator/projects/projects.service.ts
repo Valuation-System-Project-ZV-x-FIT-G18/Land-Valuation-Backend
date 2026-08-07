@@ -4,7 +4,13 @@ import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 import { projectFieldColumns } from './constants/project-fields'
 
-type Body = { applicantNic?: string; coordinatorId?: string; data?: string }
+type Body = {
+  applicantNic?: string
+  coordinatorId?: string
+  sourceDraftId?: string
+  sourceDraftFileTypes?: string
+  data?: string
+}
 type Files = Record<string, Express.Multer.File[]>
 
 // Creates a land valuation project. Every form field is stored in its own column
@@ -22,6 +28,13 @@ export class ProjectsService implements OnModuleInit {
 
   // Make sure every form field has its own column (safe to run repeatedly).
   async onModuleInit() {
+    try {
+      await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS file_data BYTEA`)
+      await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS mime VARCHAR(100) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS size INTEGER NOT NULL DEFAULT 0`)
+    } catch (err) {
+      this.logger.error(`Could not ensure project file columns: ${(err as Error).message}`)
+    }
     for (const { column } of projectFieldColumns) {
       try {
         await this.db.query(
@@ -112,12 +125,61 @@ export class ProjectsService implements OnModuleInit {
     const projectId = result.rows[0].project_id as string
 
     // Save one row per uploaded document/photo.
+    const uploadedTypes = new Set<string>()
     for (const [fieldName, list] of Object.entries(files ?? {})) {
       for (const f of list) {
+        uploadedTypes.add(fieldName)
         await this.db.query(
           `INSERT INTO project_files (project_id, file_type, file_name, file_path, mime, size)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [projectId, fieldName, f.originalname, f.filename, f.mimetype, f.size],
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id`,
+          [projectId, fieldName, f.originalname, f.filename ?? '', f.mimetype, f.size],
+        )
+        await this.db.query(`UPDATE project_files SET file_data = $2 WHERE project_id = $1 AND file_type = $3 AND file_name = $4`, [
+          projectId,
+          f.buffer ?? null,
+          fieldName,
+          f.originalname,
+        ])
+      }
+    }
+
+    // If the coordinator used one of the applicant's submitted forms, copy
+    // its already-uploaded documents into this project. Manual uploads above
+    // win, so replacing a file in the coordinator form works as expected.
+    const sourceDraftId = Number(body.sourceDraftId)
+    let sourceTypes: string[] = []
+    try {
+      sourceTypes = JSON.parse(body.sourceDraftFileTypes || '[]')
+    } catch {
+      sourceTypes = []
+    }
+    sourceTypes = sourceTypes
+      .map((t) => String(t ?? '').trim())
+      .filter((t) => t && !uploadedTypes.has(t))
+    if (Number.isInteger(sourceDraftId) && sourceTypes.length) {
+      const copied = await this.db.query(
+        `SELECT f.doc_type, f.file_name, f.file_path, f.file_mime, f.file_data
+           FROM applicant_project_detail_files f
+           JOIN applicant_project_details d ON d.id = f.draft_id
+          WHERE f.draft_id = $1
+            AND d.applicant_nic = $2
+            AND f.doc_type = ANY($3)`,
+        [sourceDraftId, nic, sourceTypes],
+      )
+      for (const f of copied.rows) {
+        await this.db.query(
+          `INSERT INTO project_files (project_id, file_type, file_name, file_path, mime, size, file_data)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            projectId,
+            f.doc_type,
+            f.file_name,
+            f.file_path,
+            f.file_mime ?? '',
+            f.file_data ? Buffer.byteLength(f.file_data) : 0,
+            f.file_data ?? null,
+          ],
         )
       }
     }
@@ -212,12 +274,17 @@ export class ProjectsService implements OnModuleInit {
   // The latest uploaded file of a given type for a project (e.g. surveyPlan).
   async fileAttachment(projectId: string, fileType: string) {
     const r = await this.db.query(
-      `SELECT file_path FROM project_files
+      `SELECT file_name, file_path, mime, file_data FROM project_files
         WHERE project_id = $1 AND file_type = $2 ORDER BY id DESC LIMIT 1`,
       [(projectId ?? '').trim(), (fileType ?? '').trim()],
     )
     const p = r.rows[0]
-    if (!p || !p.file_path) return null
-    return { filePath: p.file_path as string }
+    if (!p || (!p.file_data && !p.file_path)) return null
+    return {
+      fileName: p.file_name as string,
+      filePath: p.file_path as string,
+      mime: p.mime as string,
+      data: p.file_data as Buffer | null,
+    }
   }
 }

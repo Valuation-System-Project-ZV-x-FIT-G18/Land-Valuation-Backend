@@ -10,14 +10,36 @@ import {
 } from '@nestjs/common'
 import type { Response } from 'express'
 import { FileFieldsInterceptor } from '@nestjs/platform-express'
-import { diskStorage } from 'multer'
-import { extname, join } from 'path'
+import { memoryStorage } from 'multer'
+import { join } from 'path'
 import { existsSync, mkdirSync } from 'fs'
 import { ProjectsService } from './projects.service'
 import { CreateProjectDto } from './dto/create-project.dto'
 
 const uploadDir = join(process.cwd(), 'uploads')
 if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
+
+function sendFileResponse(
+  res: Response,
+  file: { fileName: string; filePath?: string; mime?: string; data?: Buffer | null },
+) {
+  if (file.data) {
+    res.setHeader('Content-Type', file.mime || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.fileName)}"`)
+    res.send(file.data)
+    return
+  }
+  if (file.filePath) {
+    const path = join(uploadDir, file.filePath)
+    if (!existsSync(path)) {
+      res.status(404).json({ error: 'File is no longer available. Please re-upload it.' })
+      return
+    }
+    res.sendFile(path)
+    return
+  }
+  res.status(404).json({ error: 'File not found.' })
+}
 
 const fileFields = [
   { name: 'surveyPlan', maxCount: 1 },
@@ -65,18 +87,14 @@ export class ProjectsController {
   ) {
     const f = await this.projects.fileAttachment(projectId ?? '', type ?? '')
     if (!f) { res.status(404).json({ error: 'File not found.' }); return }
-    res.sendFile(join(uploadDir, f.filePath))
+    sendFileResponse(res, f)
   }
 
   // POST /api/coordinator/projects  (multipart/form-data)
   @Post()
   @UseInterceptors(
     FileFieldsInterceptor(fileFields, {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (_req, file, cb) =>
-          cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 5 * 1024 * 1024 },
     }),
   )

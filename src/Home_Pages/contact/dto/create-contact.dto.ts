@@ -1,4 +1,5 @@
 import { IsEmail, IsString, Matches, MaxLength, MinLength } from 'class-validator'
+import { PHONE_MESSAGE, REQUIRED_PHONE_PATTERN } from '../../../Common_Pages/validation/patterns'
 
 export class CreateContactDto {
   @IsString()
@@ -10,9 +11,7 @@ export class CreateContactDto {
   @MaxLength(100)
   email: string
 
-  @Matches(/^7[1-9]\d{7}$/, {
-    message: 'Enter a valid 9-digit mobile number starting with 7 (e.g. 712345678).',
-  })
+  @Matches(REQUIRED_PHONE_PATTERN, { message: PHONE_MESSAGE })
   phone: string
 
   @IsString()

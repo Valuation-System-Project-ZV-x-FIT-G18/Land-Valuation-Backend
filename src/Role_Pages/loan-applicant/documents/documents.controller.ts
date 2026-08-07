@@ -9,8 +9,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
-import { diskStorage } from 'multer'
-import { extname, join } from 'path'
+import { memoryStorage } from 'multer'
+import { join } from 'path'
 import { existsSync, mkdirSync } from 'fs'
 import type { Response } from 'express'
 import { DocumentsService } from './documents.service'
@@ -18,6 +18,28 @@ import { SetDocumentStatusDto, UploadDocumentDto } from './dto/documents.dto'
 
 const uploadDir = join(process.cwd(), 'uploads')
 if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
+
+function sendFileResponse(
+  res: Response,
+  file: { fileName: string; filePath?: string; mime?: string; data?: Buffer | null },
+) {
+  if (file.data) {
+    res.setHeader('Content-Type', file.mime || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.fileName)}"`)
+    res.send(file.data)
+    return
+  }
+  if (file.filePath) {
+    const path = join(uploadDir, file.filePath)
+    if (!existsSync(path)) {
+      res.status(404).json({ error: 'File is no longer available. Please re-upload it.' })
+      return
+    }
+    res.download(path, file.fileName)
+    return
+  }
+  res.status(404).json({ error: 'File not found.' })
+}
 
 @Controller('applicant/documents')
 export class DocumentsController {
@@ -33,11 +55,7 @@ export class DocumentsController {
   @Post()
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (_req, file, cb) =>
-          cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
@@ -64,6 +82,6 @@ export class DocumentsController {
   ) {
     const f = await this.documents.attachment(nic ?? '', projectId ?? '', docType ?? '')
     if (!f) { res.status(404).json({ error: 'File not found.' }); return }
-    res.download(join(uploadDir, f.filePath), f.fileName)
+    sendFileResponse(res, f)
   }
 }

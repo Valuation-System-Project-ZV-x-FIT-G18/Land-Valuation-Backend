@@ -20,12 +20,16 @@ export class MessagesService implements OnModuleInit {
            body         TEXT         NOT NULL DEFAULT '',
            file_name    VARCHAR(255) NOT NULL DEFAULT '', -- original name (e.g. plan.pdf)
            file_path    VARCHAR(255) NOT NULL DEFAULT '', -- stored file on disk
+           file_mime    VARCHAR(100) NOT NULL DEFAULT '',
+           file_data    BYTEA,
            read         BOOLEAN      NOT NULL DEFAULT false,
            created_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
          )`,
       )
       await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name VARCHAR(255) NOT NULL DEFAULT ''`)
       await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_path VARCHAR(255) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_data BYTEA`)
       await this.db.query(`ALTER TABLE messages ALTER COLUMN body SET DEFAULT ''`)
       await this.db.query(
         `CREATE INDEX IF NOT EXISTS messages_pair_idx ON messages (sender_id, recipient_id)`,
@@ -65,22 +69,33 @@ export class MessagesService implements OnModuleInit {
     senderId: string,
     recipientId: string,
     body: string,
-    file?: { originalname: string; filename: string },
+    file?: { originalname: string; filename?: string; mimetype?: string; buffer?: Buffer },
   ) {
     const s = (senderId ?? '').trim()
     const rcpt = (recipientId ?? '').trim()
     const b = (body ?? '').trim()
     if (!s || !rcpt) return { ok: false, error: 'Missing fields.' }
     if (!b && !file) return { ok: false, error: 'Type a message or attach a file.' }
+    if (file && !file.buffer?.length && !file.filename) {
+      return { ok: false, error: 'The file content was not received. Please attach the file again.' }
+    }
     if (s === rcpt) return { ok: false, error: 'You cannot message yourself.' }
     const exists = await this.db.query(`SELECT 1 FROM users WHERE user_id = $1`, [rcpt])
     if (!exists.rows[0]) return { ok: false, error: 'Recipient not found.' }
 
     const r = await this.db.query(
-      `INSERT INTO messages (sender_id, recipient_id, body, file_name, file_path)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO messages (sender_id, recipient_id, body, file_name, file_path, file_mime, file_data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, sender_id, recipient_id, body, file_name, read, created_at`,
-      [s, rcpt, b, file?.originalname ?? '', file?.filename ?? ''],
+      [
+        s,
+        rcpt,
+        b,
+        file?.originalname ?? '',
+        file?.filename ?? '',
+        file?.mimetype ?? '',
+        file?.buffer ?? null,
+      ],
     )
     return { ok: true, message: this.toMessage(r.rows[0]) }
   }
@@ -90,13 +105,18 @@ export class MessagesService implements OnModuleInit {
     const n = Number(id)
     if (!Number.isInteger(n)) return null
     const r = await this.db.query(
-      `SELECT sender_id, recipient_id, file_name, file_path FROM messages WHERE id = $1`,
+      `SELECT sender_id, recipient_id, file_name, file_path, file_mime, file_data FROM messages WHERE id = $1`,
       [n],
     )
     const m = r.rows[0]
-    if (!m || !m.file_path) return null
+    if (!m || (!m.file_data && !m.file_path)) return null
     if (m.sender_id !== userId && m.recipient_id !== userId) return null // not yours
-    return { fileName: m.file_name as string, filePath: m.file_path as string }
+    return {
+      fileName: m.file_name as string,
+      filePath: m.file_path as string,
+      mime: m.file_mime as string,
+      data: m.file_data as Buffer | null,
+    }
   }
 
   // The full conversation between two users (both directions). Also marks the
