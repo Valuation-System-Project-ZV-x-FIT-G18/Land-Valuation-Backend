@@ -30,6 +30,27 @@ export class MessagesService implements OnModuleInit {
       await this.db.query(
         `CREATE INDEX IF NOT EXISTS messages_pair_idx ON messages (sender_id, recipient_id)`,
       )
+
+      // Project Details Form: a coordinator sends this (from within a
+      // conversation) to a loan applicant, who fills it in and sends it back.
+      // `data` holds the same field set as the coordinator's Create Project
+      // form (minus document uploads).
+      await this.db.query(
+        `CREATE TABLE IF NOT EXISTS project_detail_forms (
+           id             SERIAL PRIMARY KEY,
+           coordinator_id VARCHAR(20)  NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+           applicant_id   VARCHAR(20)  NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+           status         VARCHAR(20)  NOT NULL DEFAULT 'Sent',
+           data           JSONB        NOT NULL DEFAULT '{}'::jsonb,
+           created_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+           submitted_at   TIMESTAMPTZ
+         )`,
+      )
+      // Links a message bubble to the form it represents (the "sent" message
+      // and the applicant's "submitted" reply both point at the same form).
+      await this.db.query(
+        `ALTER TABLE messages ADD COLUMN IF NOT EXISTS form_id INTEGER REFERENCES project_detail_forms(id)`,
+      )
     } catch (err) {
       this.logger.error(`Messages setup failed: ${(err as Error).message}`)
     }
@@ -44,6 +65,7 @@ export class MessagesService implements OnModuleInit {
       fileName: (m.file_name as string) ?? '',
       read: m.read as boolean,
       createdAt: m.created_at as string,
+      formId: m.form_id != null ? Number(m.form_id) : undefined,
     }
   }
 
@@ -103,7 +125,7 @@ export class MessagesService implements OnModuleInit {
   // messages the viewer received in this thread as read.
   async conversation(userId: string, otherId: string) {
     const r = await this.db.query(
-      `SELECT id, sender_id, recipient_id, body, file_name, read, created_at
+      `SELECT id, sender_id, recipient_id, body, file_name, read, created_at, form_id
          FROM messages
         WHERE (sender_id = $1 AND recipient_id = $2)
            OR (sender_id = $2 AND recipient_id = $1)
@@ -153,5 +175,78 @@ export class MessagesService implements OnModuleInit {
       }
     }
     return [...map.values()]
+  }
+
+  private toForm(f: Row) {
+    return {
+      id: Number(f.id),
+      coordinatorId: f.coordinator_id as string,
+      applicantId: f.applicant_id as string,
+      status: f.status as string,
+      data: (f.data as Record<string, string>) ?? {},
+      createdAt: f.created_at as string,
+      submittedAt: (f.submitted_at as string) ?? null,
+    }
+  }
+
+  // Coordinator sends a Project Details Form to a loan applicant, inside
+  // their conversation. Creates the form row plus a message bubble for it.
+  async sendForm(coordinatorId: string, applicantId: string) {
+    const c = (coordinatorId ?? '').trim()
+    const a = (applicantId ?? '').trim()
+    if (!c || !a) return { ok: false, error: 'Missing fields.' }
+
+    const roles = await this.db.query(`SELECT user_id, role FROM users WHERE user_id = ANY($1)`, [[c, a]])
+    const cRole = roles.rows.find((r) => r.user_id === c)?.role
+    const aRole = roles.rows.find((r) => r.user_id === a)?.role
+    if (cRole !== 'Coordinator') return { ok: false, error: 'Only a coordinator can send this form.' }
+    if (aRole !== 'Loan Applicant') return { ok: false, error: 'This form can only be sent to a loan applicant.' }
+
+    const f = await this.db.query(
+      `INSERT INTO project_detail_forms (coordinator_id, applicant_id) VALUES ($1, $2) RETURNING id`,
+      [c, a],
+    )
+    const formId = Number(f.rows[0].id)
+    const m = await this.db.query(
+      `INSERT INTO messages (sender_id, recipient_id, body, form_id)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, sender_id, recipient_id, body, file_name, read, created_at, form_id`,
+      [c, a, '📋 Sent you a Project Details Form to fill in.', formId],
+    )
+    return { ok: true, message: this.toMessage(m.rows[0]) }
+  }
+
+  // Fetch one form — only its coordinator or applicant may see it.
+  async getForm(formId: number, userId: string) {
+    if (!Number.isInteger(formId)) return null
+    const r = await this.db.query(`SELECT * FROM project_detail_forms WHERE id = $1`, [formId])
+    const f = r.rows[0]
+    if (!f) return null
+    if (f.coordinator_id !== userId && f.applicant_id !== userId) return null
+    return this.toForm(f)
+  }
+
+  // The applicant fills in the form and sends it back — records the data and
+  // posts a reply message so the coordinator sees it in the conversation.
+  async submitForm(formId: number, userId: string, data: Record<string, string>) {
+    if (!Number.isInteger(formId)) return { ok: false, error: 'Form not found.' }
+    const r = await this.db.query(`SELECT * FROM project_detail_forms WHERE id = $1`, [formId])
+    const f = r.rows[0]
+    if (!f) return { ok: false, error: 'Form not found.' }
+    if (f.applicant_id !== userId) {
+      return { ok: false, error: 'Only the applicant this form was sent to can submit it.' }
+    }
+
+    await this.db.query(
+      `UPDATE project_detail_forms SET data = $1, status = 'Submitted', submitted_at = now() WHERE id = $2`,
+      [JSON.stringify(data ?? {}), formId],
+    )
+    const m = await this.db.query(
+      `INSERT INTO messages (sender_id, recipient_id, body, form_id)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, sender_id, recipient_id, body, file_name, read, created_at, form_id`,
+      [userId, f.coordinator_id, '✅ Submitted the Project Details Form.', formId],
+    )
+    return { ok: true, message: this.toMessage(m.rows[0]) }
   }
 }

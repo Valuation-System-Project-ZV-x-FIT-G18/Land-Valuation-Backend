@@ -2,7 +2,9 @@ import {
   Body,
   Controller,
   Get,
+  Param,
   Post,
+  Put,
   Query,
   Res,
   UploadedFile,
@@ -14,7 +16,7 @@ import { extname, join } from 'path'
 import { existsSync, mkdirSync } from 'fs'
 import type { Response } from 'express'
 import { MessagesService } from './messages.service'
-import { SendMessageDto } from './dto/send-message.dto'
+import { SendFormDto, SendMessageDto, SubmitFormDto } from './dto/send-message.dto'
 
 const uploadDir = join(process.cwd(), 'uploads')
 if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
@@ -70,5 +72,26 @@ export class MessagesController {
     const file = await this.messages.attachment(id ?? '', userId ?? '')
     if (!file) { res.status(404).json({ error: 'File not found.' }); return }
     res.download(join(uploadDir, file.filePath), file.fileName)
+  }
+
+  // POST /api/messages/forms — coordinator sends a Project Details Form to a
+  // loan applicant within their conversation.
+  @Post('forms')
+  async sendForm(@Body() dto: SendFormDto) {
+    return this.messages.sendForm(dto.coordinatorId, dto.applicantId)
+  }
+
+  // GET /api/messages/forms/:id?userId=... — only the form's coordinator or
+  // applicant may view it.
+  @Get('forms/:id')
+  async getForm(@Param('id') id: string, @Query('userId') userId: string) {
+    const form = await this.messages.getForm(Number(id), userId ?? '')
+    return { form }
+  }
+
+  // PUT /api/messages/forms/:id — the applicant submits the filled form.
+  @Put('forms/:id')
+  async submitForm(@Param('id') id: string, @Body() dto: SubmitFormDto) {
+    return this.messages.submitForm(Number(id), dto.userId, dto.data)
   }
 }
