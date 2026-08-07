@@ -5,6 +5,13 @@ import { NotificationsService } from '../../../Common_Pages/notifications/notifi
 
 const TO_ASSIGNED = 'Technical Officer Assigned'
 
+const todayIso = () => {
+  const d = new Date()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${month}-${day}`
+}
+
 // Fleet management for the coordinator: the pool of technical officers and the
 // work (valuations) waiting to be assigned to them.
 @Injectable()
@@ -255,6 +262,7 @@ export class FleetService implements OnModuleInit {
     if (time.trim() < '08:00' || time.trim() > '17:00') {
       return { ok: false, error: 'Visit time must be between 8:00 AM and 5:00 PM.' }
     }
+    if (date.trim() < todayIso()) return { ok: false, error: 'Visit date cannot be before today.' }
 
     const v = await this.db.query(
       `UPDATE valuations
