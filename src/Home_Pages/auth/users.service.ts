@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { toStoredPhone, fromStoredPhone } from '../../Common_Pages/validation/patterns'
 
@@ -107,10 +107,24 @@ export class UsersService implements OnModuleInit {
   // `token` is just a cache-busting version string returned to the frontend
   // (it has no meaning on disk — there is no file anymore).
   async setPhoto(userId: string, data: Buffer, mime: string, token: string) {
-    await this.db.query(
-      `UPDATE users SET photo_data = $1, photo_mime = $2, photo_path = $3 WHERE user_id = $4`,
+    const result = await this.db.query(
+      `UPDATE users
+          SET photo_data = $1, photo_mime = $2, photo_path = $3
+        WHERE user_id = $4
+      RETURNING octet_length(photo_data) AS stored_bytes`,
       [data, mime, token, userId],
     )
+
+    if (result.rowCount !== 1) {
+      throw new NotFoundException('The user account was not found.')
+    }
+
+    // Do not report a successful upload unless PostgreSQL confirms that the
+    // complete payload was written to the BYTEA column.
+    const storedBytes = Number(result.rows[0]?.stored_bytes ?? 0)
+    if (storedBytes !== data.length) {
+      throw new Error('The profile picture was not stored completely.')
+    }
   }
 
   // The stored profile-picture bytes + content type, for serving it back.

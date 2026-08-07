@@ -3,6 +3,7 @@ import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
 import { CreateContactDto } from './dto/create-contact.dto'
 import { toStoredPhone } from '../../Common_Pages/validation/patterns'
+import { NotificationsService } from '../../Common_Pages/notifications/notifications.service'
 
 // Business logic for contact messages (the "service" layer).
 @Injectable()
@@ -10,6 +11,7 @@ export class ContactService {
   constructor(
     private readonly db: DatabaseService,
     private readonly mail: MailService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(dto: CreateContactDto): Promise<void> {
@@ -22,6 +24,10 @@ export class ContactService {
         toStoredPhone(dto.phone), // store the full number
         dto.message.trim(),
       ],
+    )
+    await this.notifications.createForRole(
+      'Coordinator',
+      `New website message from ${dto.name.trim()} (${dto.email.trim()}).`,
     )
     // Auto-acknowledge the sender (fire-and-forget; never blocks the response).
     void this.mail.sendAcknowledgement(dto.email.trim(), dto.name, 'message')

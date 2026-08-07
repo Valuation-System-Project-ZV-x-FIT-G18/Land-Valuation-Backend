@@ -170,7 +170,7 @@ export class ReportAccessService implements OnModuleInit {
     const ref = 'CARD-' + Date.now()
     const r = await this.db.query(
       `UPDATE drafts SET paid = true, paid_at = now(), payment_ref = $2, payment_method = 'card'
-        WHERE project_id = $1 AND review_status = 'locked'`,
+        WHERE project_id = $1 AND review_status = 'locked' AND paid = false`,
       [p, ref],
     )
     if (r.rowCount === 0) return { ok: false, error: 'Report is not available for payment yet.' }
@@ -247,15 +247,48 @@ export class ReportAccessService implements OnModuleInit {
           WHERE project_id = $1 AND slip_pending = true`,
         [p, ref],
       )
-      if (r.rowCount) await this.notifyPaid(p)
+      if (!r.rowCount) return { ok: false, error: 'No pending payment slip was found.' }
+      await this.notifyPaid(p)
     } else {
-      await this.db.query(
+      const r = await this.db.query(
         `UPDATE drafts SET slip_pending = false, slip_path = '', payment_method = ''
           WHERE project_id = $1 AND slip_pending = true`,
         [p],
       )
+      if (!r.rowCount) return { ok: false, error: 'No pending payment slip was found.' }
+      await this.notifyPaymentRejected(p)
     }
     return { ok: true }
+  }
+
+  // Tell the applicant and requesting bank that a submitted payment was not
+  // accepted, so the applicant knows to submit a new payment/slip.
+  private async notifyPaymentRejected(projectId: string) {
+    try {
+      const proj = (await this.db.query(
+        `SELECT applicant_nic, bank_email FROM projects WHERE project_id = $1`,
+        [projectId],
+      )).rows[0] as Row | undefined
+      const nic = (proj?.applicant_nic as string) ?? ''
+      if (nic) {
+        await this.notifications.create(
+          nic,
+          `Your payment slip for project ${projectId} was rejected. Please check the payment details and submit a new slip.`,
+        )
+      }
+      const bankEmail = (proj?.bank_email as string) ?? ''
+      if (bankEmail) {
+        const bankUserId = await this.notifications.resolveBankUserId(bankEmail)
+        if (bankUserId) {
+          await this.notifications.create(
+            bankUserId,
+            `The payment submitted for project ${projectId} was rejected and is awaiting resubmission by the applicant.`,
+          )
+        }
+      }
+    } catch (err) {
+      this.logger.error(`Payment-rejection notification failed: ${(err as Error).message}`)
+    }
   }
 
   // The stored slip filename (for the coordinator to view it).

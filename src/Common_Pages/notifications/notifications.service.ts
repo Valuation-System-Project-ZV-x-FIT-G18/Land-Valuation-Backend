@@ -39,6 +39,19 @@ export class NotificationsService implements OnModuleInit {
     }
   }
 
+  // Notify every account with a role (for shared work queues such as the
+  // coordinator website inbox or manager review queues).
+  async createForRole(role: string, message: string) {
+    try {
+      const r = await this.db.query(`SELECT user_id FROM users WHERE role = $1`, [role])
+      for (const row of r.rows) {
+        await this.create(row.user_id as string, message)
+      }
+    } catch (err) {
+      this.logger.error(`Could not notify role ${role}: ${(err as Error).message}`)
+    }
+  }
+
   // A user's recent notifications plus the unread count.
   async list(userId: string) {
     const r = await this.db.query(

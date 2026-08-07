@@ -70,6 +70,9 @@ export class AuthController {
   )
   async uploadAvatar(@Body() dto: UploadAvatarDto, @UploadedFile() file?: Express.Multer.File) {
     if (!file) return { ok: false, error: 'No image was received.' }
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype)) {
+      return { ok: false, error: 'Please upload a JPG, PNG, WEBP, or GIF image.' }
+    }
     // Just a cache-busting token for the frontend's <img src> — has no
     // meaning on disk, since there is no file anymore.
     const token = `db-${Date.now()}-${Math.round(Math.random() * 1e9)}`

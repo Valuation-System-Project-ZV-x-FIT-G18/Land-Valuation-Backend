@@ -88,9 +88,42 @@ export class ValuationsService implements OnModuleInit {
        RETURNING id, valuation_id`,
       [projectId, (body.applicantNic ?? '').trim(), body.data || '{}', file?.filename ?? ''],
     )
+    await this.notifyValuationRequested(
+      projectId,
+      (body.applicantNic ?? '').trim(),
+      body.data || '{}',
+    )
     return {
       rowId: Number(result.rows[0].id),
       valuationId: Number(result.rows[0].valuation_id),
+    }
+  }
+
+  // Project-status milestone: a valuation request has been raised. Notify the
+  // applicant and only the bank branch linked to this valuation.
+  private async notifyValuationRequested(projectId: string, nic: string, dataJson: string) {
+    try {
+      let details: Record<string, unknown> = {}
+      try { details = JSON.parse(dataJson) as Record<string, unknown> } catch { /* empty */ }
+      if (nic) {
+        await this.notifications.create(
+          nic,
+          `A valuation request has been created for project ${projectId}. A technical officer will be assigned next.`,
+        )
+      }
+      const branchCode = String(details.bankBranchCode ?? '').trim()
+      const bankEmail = String(details.bankEmail ?? '').trim()
+      const bankUserId = branchCode || (bankEmail
+        ? await this.notifications.resolveBankUserId(bankEmail)
+        : null)
+      if (bankUserId) {
+        await this.notifications.create(
+          bankUserId,
+          `The valuation request for project ${projectId} has been created. A technical officer will be assigned next.`,
+        )
+      }
+    } catch (err) {
+      this.logger.error(`Valuation-request notification failed: ${(err as Error).message}`)
     }
   }
 

@@ -3,6 +3,7 @@ import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
 import { CreateValuationDto } from './dto/create-valuation.dto'
 import { toStoredPhone } from '../../Common_Pages/validation/patterns'
+import { NotificationsService } from '../../Common_Pages/notifications/notifications.service'
 
 // Business logic for valuation requests.
 @Injectable()
@@ -10,6 +11,7 @@ export class ValuationService {
   constructor(
     private readonly db: DatabaseService,
     private readonly mail: MailService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(dto: CreateValuationDto): Promise<void> {
@@ -23,6 +25,10 @@ export class ValuationService {
         dto.nic.trim().toUpperCase(),
         dto.message.trim(),
       ],
+    )
+    await this.notifications.createForRole(
+      'Coordinator',
+      `New valuation request from ${dto.name.trim()} (NIC ${dto.nic.trim().toUpperCase()}).`,
     )
     // Auto-acknowledge the requester (fire-and-forget; never blocks the response).
     void this.mail.sendAcknowledgement(dto.email.trim(), dto.name, 'valuation request')
