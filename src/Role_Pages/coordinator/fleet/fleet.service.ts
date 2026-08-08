@@ -6,10 +6,12 @@ import { NotificationsService } from '../../../Common_Pages/notifications/notifi
 const TO_ASSIGNED = 'Technical Officer Assigned'
 
 const todayIso = () => {
-  const d = new Date()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${d.getFullYear()}-${month}-${day}`
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date())
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? ''
+  return `${part('year')}-${part('month')}-${part('day')}`
 }
 
 // Fleet management for the coordinator: the pool of technical officers and the
@@ -273,18 +275,10 @@ export class FleetService implements OnModuleInit {
     if (!Number.isInteger(n)) return { ok: false, error: 'Invalid valuation.' }
     if (!toId.trim()) return { ok: false, error: 'Select a technical officer.' }
     if (!date.trim() || !time.trim()) return { ok: false, error: 'Pick a date and time.' }
-    const sriLankaDateParts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).formatToParts(new Date())
-    const datePart = (type: Intl.DateTimeFormatPartTypes) =>
-      sriLankaDateParts.find((part) => part.type === type)?.value ?? ''
-    const today = `${datePart('year')}-${datePart('month')}-${datePart('day')}`
-    if (date.trim() < today) return { ok: false, error: 'Visit date cannot be in the past.' }
+    if (date.trim() < todayIso()) return { ok: false, error: 'Visit date cannot be before today.' }
     if (time.trim() < '08:00' || time.trim() > '17:00') {
       return { ok: false, error: 'Visit time must be between 8:00 AM and 5:00 PM.' }
     }
-    if (date.trim() < todayIso()) return { ok: false, error: 'Visit date cannot be before today.' }
-
     const v = await this.db.query(
       `UPDATE valuations
           SET technical_officer_id = $1, status = $2, assigned_date = $3, assigned_time = $4
@@ -371,11 +365,14 @@ export class FleetService implements OnModuleInit {
   async markLeave(toId: string, reason: string, date: string) {
     const id = (toId ?? '').trim()
     if (!id) return { ok: false, error: 'Select an officer.' }
+    const leaveDate = (date ?? '').trim()
+    if (!leaveDate) return { ok: false, error: 'Pick a leave date.' }
+    if (leaveDate < todayIso()) return { ok: false, error: 'Leave date cannot be before today.' }
     const result = await this.db.query(
       `INSERT INTO to_leaves (to_id, reason, leave_date) VALUES ($1, $2, $3)
        ON CONFLICT (to_id, leave_date) WHERE leave_date IS NOT NULL DO NOTHING
        RETURNING id`,
-      [id, (reason ?? '').trim() || 'Absent', date ? date.trim() : null],
+      [id, (reason ?? '').trim() || 'Absent', leaveDate],
     )
     if (!result.rows[0]) {
       return { ok: false, error: 'You have already marked leave for this date.' }
