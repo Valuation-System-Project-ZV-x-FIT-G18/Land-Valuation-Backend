@@ -161,7 +161,8 @@ export class ValuationsService implements OnModuleInit {
             SELECT technical_officer_id FROM valuations
              WHERE status = $1 AND technical_officer_id <> '')
           AND user_id NOT IN (
-            SELECT to_id FROM to_leaves WHERE leave_date = CURRENT_DATE OR leave_date IS NULL)
+            SELECT to_id FROM to_leaves
+             WHERE status = 'Approved' AND (leave_date = CURRENT_DATE OR leave_date IS NULL))
         ORDER BY first_name, last_name`,
       [TO_ASSIGNED],
     )

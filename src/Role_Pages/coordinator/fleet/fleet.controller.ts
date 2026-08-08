@@ -4,6 +4,7 @@ import {
   AcceptRejectionDto,
   AssignFleetDto,
   MarkLeaveDto,
+  LeaveActionDto,
   RejectAssignmentDto,
   RemoveLeaveDto,
 } from './dto/fleet.dto'
@@ -64,5 +65,17 @@ export class FleetController {
   @Post('remove-leave')
   async removeLeave(@Body() dto: RemoveLeaveDto) {
     return this.fleet.removeLeave(dto.id)
+  }
+
+  // POST /api/coordinator/fleet/approve-leave  { id }
+  @Post('approve-leave')
+  async approveLeave(@Body() dto: LeaveActionDto) {
+    return this.fleet.reviewLeave(dto.id, 'Approved')
+  }
+
+  // POST /api/coordinator/fleet/reject-leave  { id }
+  @Post('reject-leave')
+  async rejectLeave(@Body() dto: LeaveActionDto) {
+    return this.fleet.reviewLeave(dto.id, 'Rejected')
   }
 }

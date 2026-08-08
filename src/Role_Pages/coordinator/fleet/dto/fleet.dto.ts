@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator'
+import { IsString, Matches, MaxLength, MinLength } from 'class-validator'
 import { Transform } from 'class-transformer'
 
 // Row ids (valuationRowId, id) come back from other endpoints as numbers
@@ -25,10 +25,14 @@ export class RejectAssignmentDto {
 
 export class MarkLeaveDto {
   @IsString() @MinLength(1) @MaxLength(20) toId: string
-  @IsOptional() @IsString() @MaxLength(500) reason?: string
+  @IsString() @MinLength(1, { message: 'Please enter a reason for leave.' }) @MaxLength(500) reason: string
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Date must be YYYY-MM-DD.' }) date: string
 }
 
 export class RemoveLeaveDto {
+  @idTransform @IsString() @MinLength(1) @MaxLength(20) id: string
+}
+
+export class LeaveActionDto {
   @idTransform @IsString() @MinLength(1) @MaxLength(20) id: string
 }

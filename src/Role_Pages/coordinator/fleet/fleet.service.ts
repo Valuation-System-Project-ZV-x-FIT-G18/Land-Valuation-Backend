@@ -53,6 +53,7 @@ export class FleetService implements OnModuleInit {
       // The specific day the officer is on leave (attendance marking). Older rows
       // with NULL are treated as "on leave today" (indefinite).
       await this.db.query(`ALTER TABLE to_leaves ADD COLUMN IF NOT EXISTS leave_date DATE`)
+      await this.db.query(`ALTER TABLE to_leaves ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'Approved'`)
       // Keep only the oldest copy if duplicate leave days already exist, then
       // enforce one leave entry per officer per calendar date at database level.
       await this.db.query(
@@ -130,7 +131,8 @@ export class FleetService implements OnModuleInit {
             SELECT technical_officer_id FROM valuations
              WHERE status = $1 AND technical_officer_id <> '')
           AND user_id NOT IN (
-            SELECT to_id FROM to_leaves WHERE leave_date = CURRENT_DATE OR leave_date IS NULL)
+            SELECT to_id FROM to_leaves
+             WHERE status = 'Approved' AND (leave_date = CURRENT_DATE OR leave_date IS NULL))
         ORDER BY first_name, last_name`,
       [TO_ASSIGNED],
     )
@@ -150,7 +152,7 @@ export class FleetService implements OnModuleInit {
               l.reason, l.leave_date
          FROM to_leaves l
          JOIN users u ON u.user_id = l.to_id
-        WHERE l.leave_date = CURRENT_DATE OR l.leave_date IS NULL
+        WHERE l.status = 'Approved' AND (l.leave_date = CURRENT_DATE OR l.leave_date IS NULL)
         ORDER BY u.first_name, u.last_name`,
     )
 
@@ -361,22 +363,25 @@ export class FleetService implements OnModuleInit {
     }
   }
 
-  // Attendance: mark an officer as on leave for a specific day (defaults today).
+  // Attendance: mark an officer as on leave for a future day.
   async markLeave(toId: string, reason: string, date: string) {
     const id = (toId ?? '').trim()
     if (!id) return { ok: false, error: 'Select an officer.' }
     const leaveDate = (date ?? '').trim()
     if (!leaveDate) return { ok: false, error: 'Pick a leave date.' }
-    if (leaveDate < todayIso()) return { ok: false, error: 'Leave date cannot be before today.' }
+    if (leaveDate <= todayIso()) return { ok: false, error: 'Leave date must be after today.' }
+    const leaveReason = (reason ?? '').trim()
+    if (!leaveReason) return { ok: false, error: 'Please enter a reason for leave.' }
     const result = await this.db.query(
-      `INSERT INTO to_leaves (to_id, reason, leave_date) VALUES ($1, $2, $3)
+      `INSERT INTO to_leaves (to_id, reason, leave_date, status) VALUES ($1, $2, $3, 'Pending')
        ON CONFLICT (to_id, leave_date) WHERE leave_date IS NOT NULL DO NOTHING
        RETURNING id`,
-      [id, (reason ?? '').trim() || 'Absent', leaveDate],
+      [id, leaveReason, leaveDate],
     )
     if (!result.rows[0]) {
       return { ok: false, error: 'You have already marked leave for this date.' }
     }
+    await this.notifyCoordinators(`Technical Officer ${id} requested leave for ${leaveDate}.`)
     return { ok: true }
   }
 
@@ -385,7 +390,7 @@ export class FleetService implements OnModuleInit {
     await this.purgePastLeaves()
     const id = (toId ?? '').trim()
     const r = await this.db.query(
-      `SELECT l.id, l.to_id, l.reason, to_char(l.leave_date, 'YYYY-MM-DD') AS leave_date,
+      `SELECT l.id, l.to_id, l.reason, l.status, to_char(l.leave_date, 'YYYY-MM-DD') AS leave_date,
               u.first_name, u.last_name
          FROM to_leaves l JOIN users u ON u.user_id = l.to_id
         WHERE (l.leave_date >= CURRENT_DATE OR l.leave_date IS NULL)
@@ -399,7 +404,22 @@ export class FleetService implements OnModuleInit {
       name: `${x.first_name} ${x.last_name}`,
       reason: x.reason as string,
       date: (x.leave_date as string) ?? '',
+      status: (x.status as string) ?? 'Pending',
     }))
+  }
+
+  async reviewLeave(id: string, status: 'Approved' | 'Rejected') {
+    const n = Number(id)
+    if (!Number.isInteger(n)) return { ok: false, error: 'Invalid leave.' }
+    const r = await this.db.query(
+      `UPDATE to_leaves
+          SET status = $1
+        WHERE id = $2 AND status = 'Pending'
+        RETURNING to_id, leave_date`,
+      [status, n],
+    )
+    if (!r.rows[0]) return { ok: false, error: 'Leave request not found or already reviewed.' }
+    return { ok: true }
   }
 
   // Remove a marked leave (officer is coming after all → back to available).
