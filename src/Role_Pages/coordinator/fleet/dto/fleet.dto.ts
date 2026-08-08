@@ -23,6 +23,11 @@ export class RejectAssignmentDto {
   @IsString() @MinLength(1) @MaxLength(500) reason: string
 }
 
+export class AssignmentActionDto {
+  @idTransform @IsString() @MinLength(1) @MaxLength(20) valuationRowId: string
+  @IsString() @MinLength(1) @MaxLength(20) toId: string
+}
+
 export class MarkLeaveDto {
   @IsString() @MinLength(1) @MaxLength(20) toId: string
   @IsString() @MinLength(1, { message: 'Please enter a reason for leave.' }) @MaxLength(500) reason: string

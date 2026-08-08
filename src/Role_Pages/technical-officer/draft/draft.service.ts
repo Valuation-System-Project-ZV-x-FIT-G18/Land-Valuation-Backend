@@ -230,7 +230,7 @@ export class DraftService implements OnModuleInit {
       // moving the valuation out of the "Technical Officer Assigned" state.
       await this.db.query(
         `UPDATE valuations SET status = 'Draft Submitted'
-           WHERE project_id = $1 AND status = 'Technical Officer Assigned'`,
+           WHERE project_id = $1 AND status IN ('Technical Officer Assigned', 'Assignment Accepted')`,
         [p],
       )
       await this.notifyOnSubmit(p)

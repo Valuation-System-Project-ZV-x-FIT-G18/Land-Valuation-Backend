@@ -4,6 +4,7 @@ import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 
 const TO_ASSIGNED = 'Technical Officer Assigned'
+const TO_ACCEPTED = 'Assignment Accepted'
 
 const todayIso = () => {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -129,22 +130,22 @@ export class FleetService implements OnModuleInit {
         WHERE role = 'Technical Officer'
           AND user_id NOT IN (
             SELECT technical_officer_id FROM valuations
-             WHERE status = $1 AND technical_officer_id <> '')
+             WHERE status IN ($1, $2) AND technical_officer_id <> '')
           AND user_id NOT IN (
             SELECT to_id FROM to_leaves
              WHERE status = 'Approved' AND (leave_date = CURRENT_DATE OR leave_date IS NULL))
         ORDER BY first_name, last_name`,
-      [TO_ASSIGNED],
+      [TO_ASSIGNED, TO_ACCEPTED],
     )
 
     const assigned = await this.db.query(
       `SELECT u.user_id, u.nic, u.first_name, u.last_name, u.district, u.phone, u.email,
-              v.project_id, v.id AS row_id, v.valuation_id
+              v.project_id, v.id AS row_id, v.valuation_id, v.status
          FROM valuations v
          JOIN users u ON u.user_id = v.technical_officer_id
-        WHERE v.status = $1 AND v.technical_officer_id <> ''
+        WHERE v.status IN ($1, $2) AND v.technical_officer_id <> ''
         ORDER BY v.project_id`,
-      [TO_ASSIGNED],
+      [TO_ASSIGNED, TO_ACCEPTED],
     )
 
     const onLeave = await this.db.query(
@@ -173,6 +174,7 @@ export class FleetService implements OnModuleInit {
         projectId: r.project_id as string,
         valuationRowId: Number(r.row_id),
         valuationId: Number(r.valuation_id),
+        status: r.status as string,
       })),
       onLeave: onLeave.rows.map((r) => ({ ...this.officer(r), reason: r.reason as string })),
       rejected: rejected.rows.map((r) => ({
@@ -382,6 +384,30 @@ export class FleetService implements OnModuleInit {
       return { ok: false, error: 'You have already marked leave for this date.' }
     }
     await this.notifyCoordinators(`Technical Officer ${id} requested leave for ${leaveDate}.`)
+    return { ok: true }
+  }
+
+  // A technical officer accepts a freshly assigned project. Accepted work still
+  // keeps the officer unavailable until the draft is submitted.
+  async acceptAssignment(rowId: string, toId: string) {
+    const n = Number(rowId)
+    if (!Number.isInteger(n)) return { ok: false, error: 'Invalid assignment.' }
+    const id = (toId ?? '').trim()
+    if (!id) return { ok: false, error: 'Invalid officer.' }
+    const r = await this.db.query(
+      `UPDATE valuations
+          SET status = $1, rejection_reason = ''
+        WHERE id = $2 AND technical_officer_id = $3 AND status = $4
+       RETURNING project_id`,
+      [TO_ACCEPTED, n, id, TO_ASSIGNED],
+    )
+    const projectId = r.rows[0]?.project_id as string | undefined
+    if (!projectId) return { ok: false, error: 'Assignment not found or already actioned.' }
+    await this.db.query(`UPDATE projects SET status = $1 WHERE project_id = $2`, [
+      TO_ACCEPTED,
+      projectId,
+    ])
+    await this.notifyCoordinators(`Technical Officer ${id} accepted project ${projectId}.`)
     return { ok: true }
   }
 

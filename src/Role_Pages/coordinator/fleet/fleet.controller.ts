@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post, Query } from '@nestjs/common'
 import { FleetService } from './fleet.service'
 import {
   AcceptRejectionDto,
+  AssignmentActionDto,
   AssignFleetDto,
   MarkLeaveDto,
   LeaveActionDto,
@@ -41,6 +42,12 @@ export class FleetController {
   @Post('accept-rejection')
   async acceptRejection(@Body() dto: AcceptRejectionDto) {
     return this.fleet.acceptRejection(dto.valuationRowId)
+  }
+
+  // POST /api/coordinator/fleet/accept-assignment  { valuationRowId, toId }
+  @Post('accept-assignment')
+  async acceptAssignment(@Body() dto: AssignmentActionDto) {
+    return this.fleet.acceptAssignment(dto.valuationRowId, dto.toId)
   }
 
   // POST /api/coordinator/fleet/reject  { valuationRowId, toId, reason }

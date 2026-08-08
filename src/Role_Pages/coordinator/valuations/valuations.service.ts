@@ -6,6 +6,7 @@ import { ObjectStorageService } from '../../../Common_Pages/storage/object-stora
 
 // The status set on a project + valuation once a technical officer is assigned.
 const TO_ASSIGNED = 'Technical Officer Assigned'
+const TO_ACCEPTED = 'Assignment Accepted'
 
 // SQL that upgrades an old valuations table to the new shape (surrogate `id`
 // primary key + per-project integer `valuation_id`). Safe to run repeatedly.
@@ -159,12 +160,12 @@ export class ValuationsService implements OnModuleInit {
         WHERE role = 'Technical Officer'
           AND user_id NOT IN (
             SELECT technical_officer_id FROM valuations
-             WHERE status = $1 AND technical_officer_id <> '')
+             WHERE status IN ($1, $2) AND technical_officer_id <> '')
           AND user_id NOT IN (
             SELECT to_id FROM to_leaves
              WHERE status = 'Approved' AND (leave_date = CURRENT_DATE OR leave_date IS NULL))
         ORDER BY first_name, last_name`,
-      [TO_ASSIGNED],
+      [TO_ASSIGNED, TO_ACCEPTED],
     )
     return r.rows.map((row) => ({
       userId: row.user_id as string,
