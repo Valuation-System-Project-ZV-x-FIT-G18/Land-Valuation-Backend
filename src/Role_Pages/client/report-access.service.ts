@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../Common_Pages/notifications/notifications.service'
+import { ObjectStorageService } from '../../Common_Pages/storage/object-storage.service'
 
 type Row = Record<string, any>
 
@@ -53,6 +54,7 @@ export class ReportAccessService implements OnModuleInit {
     private readonly db: DatabaseService,
     private readonly mail: MailService,
     private readonly notifications: NotificationsService,
+    private readonly storage: ObjectStorageService,
   ) {}
 
   // On payment completion (card paid, or a slip verified): finish the valuation,
@@ -101,6 +103,10 @@ export class ReportAccessService implements OnModuleInit {
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS payment_ref VARCHAR(60) NOT NULL DEFAULT ''`)
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS payment_method VARCHAR(20) NOT NULL DEFAULT ''`)
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_path VARCHAR(255) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_name VARCHAR(255) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_mime VARCHAR(100) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_data BYTEA`)
+      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
       // A slip payment waits here until a coordinator verifies it.
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_pending BOOLEAN NOT NULL DEFAULT false`)
     } catch (err) {
@@ -180,14 +186,16 @@ export class ReportAccessService implements OnModuleInit {
 
   // Manual bank payment — store the slip and mark it PENDING coordinator
   // verification (not paid yet). It shows as paid only after verify().
-  async paySlip(projectId: string, slipFilename: string) {
+  async paySlip(projectId: string, file?: Express.Multer.File) {
     const p = (projectId ?? '').trim()
     if (!p) return { ok: false, error: 'Missing project.' }
-    if (!slipFilename) return { ok: false, error: 'Please attach the payment slip.' }
+    if (!file) return { ok: false, error: 'Please attach the payment slip.' }
+    const stored = await this.storage.store(file, `payment-slips/${p}`)
     const r = await this.db.query(
-      `UPDATE drafts SET payment_method = 'bank_slip', slip_path = $2, slip_pending = true
+      `UPDATE drafts SET payment_method = 'bank_slip', slip_path = '', slip_name = $2,
+                         slip_mime = $3, slip_data = $4, slip_object_key = $5, slip_pending = true
         WHERE project_id = $1 AND review_status = 'locked' AND paid = false`,
-      [p, slipFilename],
+      [p, file.originalname, file.mimetype, stored.databaseFallback, stored.objectKey],
     )
     if (r.rowCount === 0) return { ok: false, error: 'Report is not available for payment yet.' }
     await this.notifySlipSubmitted(p)
@@ -251,7 +259,7 @@ export class ReportAccessService implements OnModuleInit {
       await this.notifyPaid(p)
     } else {
       const r = await this.db.query(
-        `UPDATE drafts SET slip_pending = false, slip_path = '', payment_method = ''
+        `UPDATE drafts SET slip_pending = false, slip_path = '', slip_name = '', slip_mime = '', slip_data = NULL, slip_object_key = '', payment_method = ''
           WHERE project_id = $1 AND slip_pending = true`,
         [p],
       )
@@ -292,10 +300,12 @@ export class ReportAccessService implements OnModuleInit {
   }
 
   // The stored slip filename (for the coordinator to view it).
-  async slipPath(projectId: string) {
-    const r = await this.db.query(`SELECT slip_path FROM drafts WHERE project_id = $1`, [(projectId ?? '').trim()])
-    const path = r.rows[0]?.slip_path as string | undefined
-    return path || null
+  async slipFile(projectId: string) {
+    const r = await this.db.query(`SELECT slip_name, slip_mime, slip_object_key FROM drafts WHERE project_id = $1`, [(projectId ?? '').trim()])
+    const row = r.rows[0]
+    if (!row?.slip_object_key) return null
+    const objectData = await this.storage.read(row.slip_object_key as string)
+    return { fileName: (row.slip_name as string) || 'payment-slip', mime: (row.slip_mime as string) || 'application/octet-stream', data: objectData }
   }
 
   // Whether the bank may view a project's report (locked AND paid).

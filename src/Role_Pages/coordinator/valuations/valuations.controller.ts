@@ -9,16 +9,11 @@ import {
   UseInterceptors,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
-import { diskStorage } from 'multer'
-import { extname, join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { memoryStorage } from 'multer'
 import type { Response } from 'express'
 import { ValuationsService } from './valuations.service'
 import { CreateValuationRequestDto } from './dto/create-valuation-request.dto'
 import { AssignOfficerDto } from './dto/assign-officer.dto'
-
-const uploadDir = join(process.cwd(), 'uploads')
-if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 
 @Controller('coordinator/valuations')
 export class ValuationsController {
@@ -28,11 +23,7 @@ export class ValuationsController {
   @Post()
   @UseInterceptors(
     FileInterceptor('bankRequestLetter', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (_req, file, cb) =>
-          cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 5 * 1024 * 1024 },
     }),
   )
@@ -68,9 +59,12 @@ export class ValuationsController {
   // GET /api/coordinator/valuations/file?id=<row id>
   @Get('file')
   async file(@Query('id') id: string, @Res() res: Response) {
-    const path = await this.valuations.requestLetterPath(id ?? '')
-    if (!path) { res.status(404).json({ error: 'File not found.' }); return }
-    res.sendFile(join(uploadDir, path))
+    const file = await this.valuations.requestLetter(id ?? '')
+    if (!file) { res.status(404).json({ error: 'File not found.' }); return }
+    if (!file.data) { res.status(404).json({ error: 'Object not found in Supabase Storage.' }); return }
+    res.setHeader('Content-Type', file.mime || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`)
+    res.send(file.data)
   }
 
   // GET /api/coordinator/valuations/status?id=<surrogate row id>

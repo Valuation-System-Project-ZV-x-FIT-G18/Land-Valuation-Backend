@@ -9,15 +9,10 @@ import {
   UseInterceptors,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
-import { diskStorage } from 'multer'
-import { extname, join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { memoryStorage } from 'multer'
 import type { Response } from 'express'
 import { MessagesService } from './messages.service'
 import { SendMessageDto } from './dto/send-message.dto'
-
-const uploadDir = join(process.cwd(), 'uploads')
-if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 
 @Controller('messages')
 export class MessagesController {
@@ -45,11 +40,7 @@ export class MessagesController {
   @Post()
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (_req, file, cb) =>
-          cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
@@ -69,6 +60,9 @@ export class MessagesController {
   ) {
     const file = await this.messages.attachment(id ?? '', userId ?? '')
     if (!file) { res.status(404).json({ error: 'File not found.' }); return }
-    res.download(join(uploadDir, file.filePath), file.fileName)
+    if (!file.data) { res.status(404).json({ error: 'Object not found in Supabase Storage.' }); return }
+    res.setHeader('Content-Type', file.mime || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`)
+    res.send(file.data)
   }
 }

@@ -9,15 +9,10 @@ import {
   UseInterceptors,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
-import { diskStorage } from 'multer'
-import { extname, join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { memoryStorage } from 'multer'
 import type { Response } from 'express'
 import { SitePhotosService } from './site-photos.service'
 import { UploadSitePhotoDto } from './dto/upload-photo.dto'
-
-const uploadDir = join(process.cwd(), 'uploads')
-if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 
 @Controller('technical-officer/site-photos')
 export class SitePhotosController {
@@ -33,11 +28,7 @@ export class SitePhotosController {
   @Post()
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (_req, file, cb) =>
-          cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
@@ -60,6 +51,12 @@ export class SitePhotosController {
   ) {
     const f = await this.photos.attachment(projectId ?? '', photoType ?? '')
     if (!f) { res.status(404).json({ error: 'Photo not found.' }); return }
-    res.sendFile(join(uploadDir, f.filePath))
+    if (!f.data) {
+      res.status(410).json({ error: 'This legacy photo is missing. Please upload it again.' })
+      return
+    }
+    res.set('Content-Type', f.mime)
+    res.set('Content-Disposition', `inline; filename="${f.fileName.replace(/"/g, '')}"`)
+    res.send(f.data)
   }
 }

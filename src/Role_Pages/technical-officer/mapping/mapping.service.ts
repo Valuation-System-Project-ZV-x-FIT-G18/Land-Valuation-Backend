@@ -283,6 +283,10 @@ export class MappingService implements OnModuleInit {
          locality_sources = EXCLUDED.locality_sources, created_at = now()`,
       [p, Number(lat) || null, Number(lng) || null, accessDescription ?? '', localityDescription ?? '', aSrc, lSrc],
     )
+    await this.db.query(
+      `UPDATE projects SET latitude = $1, longitude = $2 WHERE project_id = $3`,
+      [String(lat), String(lng), p],
+    )
     return { ok: true }
   }
 }

@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
+import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
 
 // Documents a loan applicant uploads for a valuation. One row per
 // (applicant NIC, project, document type); re-uploading replaces the previous
@@ -13,6 +14,7 @@ export class DocumentsService implements OnModuleInit {
   constructor(
     private readonly db: DatabaseService,
     private readonly notifications: NotificationsService,
+    private readonly storage: ObjectStorageService,
   ) {}
 
   async onModuleInit() {
@@ -30,6 +32,9 @@ export class DocumentsService implements OnModuleInit {
          )`,
       )
       await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS project_id VARCHAR(20) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS file_data BYTEA`)
+      await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
       // Existing rows predate per-project documents — attach them to that
       // applicant's earliest project so nothing already uploaded is lost.
       await this.db.query(
@@ -43,9 +48,13 @@ export class DocumentsService implements OnModuleInit {
       await this.db.query(
         `ALTER TABLE applicant_documents DROP CONSTRAINT IF EXISTS applicant_documents_applicant_nic_doc_type_key`,
       )
-      await this.db.query(
-        `ALTER TABLE applicant_documents ADD CONSTRAINT applicant_documents_nic_project_doc_key
-           UNIQUE (applicant_nic, project_id, doc_type)`,
+      await this.db.query(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'applicant_documents_nic_project_doc_key') THEN
+            ALTER TABLE applicant_documents ADD CONSTRAINT applicant_documents_nic_project_doc_key
+              UNIQUE (applicant_nic, project_id, doc_type);
+          END IF;
+        END $$`,
       )
     } catch (err) {
       this.logger.error(`Applicant documents setup failed: ${(err as Error).message}`)
@@ -74,20 +83,21 @@ export class DocumentsService implements OnModuleInit {
     nic: string,
     projectId: string,
     docType: string,
-    file?: { originalname: string; filename: string },
+    file?: Express.Multer.File,
   ) {
     const n = (nic ?? '').trim()
     const p = (projectId ?? '').trim()
     const t = (docType ?? '').trim()
     if (!n || !t || !file) return { ok: false, error: 'Missing details or file.' }
 
+    const stored = await this.storage.store(file, `applicant-documents/${n}/${p}/${t}`)
     await this.db.query(
-      `INSERT INTO applicant_documents (applicant_nic, project_id, doc_type, file_name, file_path, status)
-       VALUES ($1, $2, $3, $4, $5, 'Submitted')
+      `INSERT INTO applicant_documents (applicant_nic, project_id, doc_type, file_name, file_path, file_mime, file_data, object_key, status)
+       VALUES ($1, $2, $3, $4, '', $5, $6, $7, 'Submitted')
        ON CONFLICT (applicant_nic, project_id, doc_type)
-       DO UPDATE SET file_name = EXCLUDED.file_name, file_path = EXCLUDED.file_path,
+       DO UPDATE SET file_name = EXCLUDED.file_name, file_path = '', file_mime = EXCLUDED.file_mime, file_data = EXCLUDED.file_data, object_key = EXCLUDED.object_key,
                      status = 'Submitted', created_at = now()`,
-      [n, p, t, file.originalname, file.filename],
+      [n, p, t, file.originalname, file.mimetype, stored.databaseFallback, stored.objectKey],
     )
     return { ok: true }
   }
@@ -119,12 +129,13 @@ export class DocumentsService implements OnModuleInit {
   // The stored file for a document (for download).
   async attachment(nic: string, projectId: string, docType: string) {
     const r = await this.db.query(
-      `SELECT file_name, file_path FROM applicant_documents
+      `SELECT file_name, file_mime, object_key FROM applicant_documents
         WHERE applicant_nic = $1 AND project_id = $2 AND doc_type = $3`,
       [(nic ?? '').trim(), (projectId ?? '').trim(), (docType ?? '').trim()],
     )
     const d = r.rows[0]
-    if (!d || !d.file_path) return null
-    return { fileName: d.file_name as string, filePath: d.file_path as string }
+    if (!d?.object_key) return null
+    const objectData = await this.storage.read(d.object_key as string)
+    return { fileName: d.file_name as string, mime: d.file_mime as string, data: objectData }
   }
 }

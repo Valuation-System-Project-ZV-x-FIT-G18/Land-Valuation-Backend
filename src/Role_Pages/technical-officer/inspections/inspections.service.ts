@@ -1,11 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
-import { readFile } from 'fs/promises'
-import { join } from 'path'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 import { inspectionFields } from './inspection-fields'
-
-const uploadDir = join(process.cwd(), 'uploads')
+import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
 
 // Site inspection reports. The technical officer uploads the handwritten form;
 // we OCR it into a draft they can edit, then save the final data.
@@ -16,6 +13,7 @@ export class InspectionsService implements OnModuleInit {
   constructor(
     private readonly db: DatabaseService,
     private readonly notifications: NotificationsService,
+    private readonly storage: ObjectStorageService,
   ) {}
 
   async onModuleInit() {
@@ -31,17 +29,33 @@ export class InspectionsService implements OnModuleInit {
            UNIQUE (project_id)
          )`,
       )
+      await this.db.query(`CREATE TABLE IF NOT EXISTS inspection_files (
+        project_id VARCHAR(20) PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
+        file_name VARCHAR(255) NOT NULL, file_mime VARCHAR(100) NOT NULL DEFAULT '',
+        file_data BYTEA, object_key VARCHAR(1024) NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`)
+      await this.db.query(`ALTER TABLE inspection_files ALTER COLUMN file_data DROP NOT NULL`)
+      await this.db.query(`ALTER TABLE inspection_files ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
     } catch (err) {
       this.logger.error(`Inspections setup failed: ${(err as Error).message}`)
     }
   }
 
   // Run OCR on the uploaded file and parse it into draft fields.
-  async ocr(storedFileName: string, originalName: string) {
+  async ocr(projectId: string, file: Express.Multer.File) {
     let rawText = ''
     try {
-      const buffer = await readFile(join(uploadDir, storedFileName))
-      rawText = await this.runOcr(buffer, originalName)
+      const p = (projectId ?? '').trim()
+      if (p) {
+        const stored = await this.storage.store(file, `inspection-forms/${p}`)
+        await this.db.query(
+          `INSERT INTO inspection_files (project_id, file_name, file_mime, file_data, object_key)
+           VALUES ($1,$2,$3,$4,$5) ON CONFLICT (project_id) DO UPDATE SET
+           file_name=EXCLUDED.file_name,file_mime=EXCLUDED.file_mime,file_data=EXCLUDED.file_data,
+           object_key=EXCLUDED.object_key,created_at=now()`,
+          [p, file.originalname, file.mimetype, stored.databaseFallback, stored.objectKey],
+        )
+      }
+      rawText = await this.runOcr(file.buffer, file.originalname)
     } catch (err) {
       this.logger.error(`OCR failed: ${(err as Error).message}`)
       return { fields: {}, rawText: '', ocrError: (err as Error).message }

@@ -13,19 +13,19 @@ export const CITY_PATTERN = /^\D*$/
 export const CITY_MESSAGE = 'City cannot contain numbers.'
 
 // A phone number is stored as the fixed "+94" prefix plus a 9-digit Sri
-// Lankan mobile number starting with 7 (e.g. +94712345678). Forms only
-// collect the 9-digit local part; PHONE_PATTERN validates that part and is
-// for optional fields (an empty string is also accepted); required phone
-// fields should also add @IsNotEmpty or rely on @Matches alone without
-// @IsOptional.
-export const PHONE_PATTERN = /^$|^7[1-9]\d{7}$/
-export const PHONE_MESSAGE = 'Enter a valid 9-digit mobile number starting with 7 (e.g. 712345678).'
+// Lankan local number. Forms collect the 9-digit local part, so both mobile
+// and landline numbers are accepted (e.g. +94771234567, +94112345678).
+export const REQUIRED_PHONE_PATTERN = /^[1-9]\d{8}$/
+export const PHONE_PATTERN = /^$|^[1-9]\d{8}$/
+export const PHONE_MESSAGE = 'Enter a valid Sri Lankan number: 9 digits after +94 (e.g. 771234567 or 112345678).'
 
 // Combines a validated 9-digit local number with the fixed "+94" prefix to
 // produce the exact string stored in the database. Returns '' when no digits
 // were provided, so optional phone fields stay blank instead of "+94".
 export function toStoredPhone(raw: string | undefined | null): string {
-  const digits = (raw ?? '').trim()
+  let digits = (raw ?? '').replace(/\D/g, '')
+  if (digits.startsWith('94')) digits = digits.slice(2)
+  if (digits.startsWith('0')) digits = digits.slice(1)
   return digits ? `+94${digits}` : ''
 }
 

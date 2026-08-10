@@ -4,6 +4,16 @@ import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 
 const TO_ASSIGNED = 'Technical Officer Assigned'
+const TO_ACCEPTED = 'Assignment Accepted'
+
+const todayIso = () => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date())
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? ''
+  return `${part('year')}-${part('month')}-${part('day')}`
+}
 
 // Fleet management for the coordinator: the pool of technical officers and the
 // work (valuations) waiting to be assigned to them.
@@ -44,6 +54,21 @@ export class FleetService implements OnModuleInit {
       // The specific day the officer is on leave (attendance marking). Older rows
       // with NULL are treated as "on leave today" (indefinite).
       await this.db.query(`ALTER TABLE to_leaves ADD COLUMN IF NOT EXISTS leave_date DATE`)
+      await this.db.query(`ALTER TABLE to_leaves ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'Approved'`)
+      // Keep only the oldest copy if duplicate leave days already exist, then
+      // enforce one leave entry per officer per calendar date at database level.
+      await this.db.query(
+        `DELETE FROM to_leaves newer
+          USING to_leaves older
+         WHERE newer.to_id = older.to_id
+           AND newer.leave_date = older.leave_date
+           AND newer.id > older.id`,
+      )
+      await this.db.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS to_leaves_officer_date_unique
+           ON to_leaves (to_id, leave_date)
+         WHERE leave_date IS NOT NULL`,
+      )
       // Add the foreign key to an older to_leaves table that lacks it.
       await this.db.query(
         `DO $$
@@ -105,21 +130,22 @@ export class FleetService implements OnModuleInit {
         WHERE role = 'Technical Officer'
           AND user_id NOT IN (
             SELECT technical_officer_id FROM valuations
-             WHERE status = $1 AND technical_officer_id <> '')
+             WHERE status IN ($1, $2) AND technical_officer_id <> '')
           AND user_id NOT IN (
-            SELECT to_id FROM to_leaves WHERE leave_date = CURRENT_DATE OR leave_date IS NULL)
+            SELECT to_id FROM to_leaves
+             WHERE status = 'Approved' AND (leave_date = CURRENT_DATE OR leave_date IS NULL))
         ORDER BY first_name, last_name`,
-      [TO_ASSIGNED],
+      [TO_ASSIGNED, TO_ACCEPTED],
     )
 
     const assigned = await this.db.query(
       `SELECT u.user_id, u.nic, u.first_name, u.last_name, u.district, u.phone, u.email,
-              v.project_id, v.id AS row_id, v.valuation_id
+              v.project_id, v.id AS row_id, v.valuation_id, v.status
          FROM valuations v
          JOIN users u ON u.user_id = v.technical_officer_id
-        WHERE v.status = $1 AND v.technical_officer_id <> ''
+        WHERE v.status IN ($1, $2) AND v.technical_officer_id <> ''
         ORDER BY v.project_id`,
-      [TO_ASSIGNED],
+      [TO_ASSIGNED, TO_ACCEPTED],
     )
 
     const onLeave = await this.db.query(
@@ -127,7 +153,7 @@ export class FleetService implements OnModuleInit {
               l.reason, l.leave_date
          FROM to_leaves l
          JOIN users u ON u.user_id = l.to_id
-        WHERE l.leave_date = CURRENT_DATE OR l.leave_date IS NULL
+        WHERE l.status = 'Approved' AND (l.leave_date = CURRENT_DATE OR l.leave_date IS NULL)
         ORDER BY u.first_name, u.last_name`,
     )
 
@@ -148,6 +174,7 @@ export class FleetService implements OnModuleInit {
         projectId: r.project_id as string,
         valuationRowId: Number(r.row_id),
         valuationId: Number(r.valuation_id),
+        status: r.status as string,
       })),
       onLeave: onLeave.rows.map((r) => ({ ...this.officer(r), reason: r.reason as string })),
       rejected: rejected.rows.map((r) => ({
@@ -252,7 +279,10 @@ export class FleetService implements OnModuleInit {
     if (!Number.isInteger(n)) return { ok: false, error: 'Invalid valuation.' }
     if (!toId.trim()) return { ok: false, error: 'Select a technical officer.' }
     if (!date.trim() || !time.trim()) return { ok: false, error: 'Pick a date and time.' }
-
+    if (date.trim() < todayIso()) return { ok: false, error: 'Visit date cannot be before today.' }
+    if (time.trim() < '08:00' || time.trim() > '17:00') {
+      return { ok: false, error: 'Visit time must be between 8:00 AM and 5:00 PM.' }
+    }
     const v = await this.db.query(
       `UPDATE valuations
           SET technical_officer_id = $1, status = $2, assigned_date = $3, assigned_time = $4
@@ -335,14 +365,69 @@ export class FleetService implements OnModuleInit {
     }
   }
 
-  // Attendance: mark an officer as on leave for a specific day (defaults today).
+  // Attendance: mark an officer as on leave for a future day.
   async markLeave(toId: string, reason: string, date: string) {
     const id = (toId ?? '').trim()
     if (!id) return { ok: false, error: 'Select an officer.' }
-    await this.db.query(
-      `INSERT INTO to_leaves (to_id, reason, leave_date) VALUES ($1, $2, $3)`,
-      [id, (reason ?? '').trim() || 'Absent', date ? date.trim() : null],
+    const leaveDate = (date ?? '').trim()
+    if (!leaveDate) return { ok: false, error: 'Pick a leave date.' }
+    if (leaveDate <= todayIso()) return { ok: false, error: 'Leave date must be after today.' }
+    const leaveReason = (reason ?? '').trim()
+    if (!leaveReason) return { ok: false, error: 'Please enter a reason for leave.' }
+    const result = await this.db.query(
+      `INSERT INTO to_leaves (to_id, reason, leave_date, status) VALUES ($1, $2, $3, 'Pending')
+       ON CONFLICT (to_id, leave_date) WHERE leave_date IS NOT NULL DO NOTHING
+       RETURNING id`,
+      [id, leaveReason, leaveDate],
     )
+    if (!result.rows[0]) {
+      return { ok: false, error: 'You have already marked leave for this date.' }
+    }
+    await this.notifyCoordinators(`Technical Officer ${id} requested leave for ${leaveDate}.`)
+    return { ok: true }
+  }
+
+  // A technical officer accepts a freshly assigned project. Accepted work still
+  // keeps the officer unavailable until the draft is submitted.
+  async acceptAssignment(rowId: string, toId: string) {
+    const n = Number(rowId)
+    if (!Number.isInteger(n)) return { ok: false, error: 'Invalid assignment.' }
+    const id = (toId ?? '').trim()
+    if (!id) return { ok: false, error: 'Invalid officer.' }
+
+    const current = await this.db.query(
+      `SELECT status FROM valuations WHERE id = $1 AND technical_officer_id = $2 LIMIT 1`,
+      [n, id],
+    )
+    const currentStatus = current.rows[0]?.status as string | undefined
+    if (!currentStatus) return { ok: false, error: 'Assignment not found.' }
+    if (currentStatus === TO_ACCEPTED) return { ok: true }
+    if (currentStatus !== TO_ASSIGNED) {
+      return { ok: false, error: 'This assignment has already been actioned.' }
+    }
+
+    const r = await this.db.query(
+      `UPDATE valuations
+          SET status = $1, rejection_reason = ''
+        WHERE id = $2 AND technical_officer_id = $3 AND status = $4
+       RETURNING project_id`,
+      [TO_ACCEPTED, n, id, TO_ASSIGNED],
+    )
+    const projectId = r.rows[0]?.project_id as string | undefined
+    if (!projectId) {
+      const latest = await this.db.query(
+        `SELECT status FROM valuations WHERE id = $1 AND technical_officer_id = $2 LIMIT 1`,
+        [n, id],
+      )
+      return latest.rows[0]?.status === TO_ACCEPTED
+        ? { ok: true }
+        : { ok: false, error: 'This assignment has already been actioned.' }
+    }
+    await this.db.query(`UPDATE projects SET status = $1 WHERE project_id = $2`, [
+      TO_ACCEPTED,
+      projectId,
+    ])
+    await this.notifyCoordinators(`Technical Officer ${id} accepted project ${projectId}.`)
     return { ok: true }
   }
 
@@ -351,7 +436,7 @@ export class FleetService implements OnModuleInit {
     await this.purgePastLeaves()
     const id = (toId ?? '').trim()
     const r = await this.db.query(
-      `SELECT l.id, l.to_id, l.reason, to_char(l.leave_date, 'YYYY-MM-DD') AS leave_date,
+      `SELECT l.id, l.to_id, l.reason, l.status, to_char(l.leave_date, 'YYYY-MM-DD') AS leave_date,
               u.first_name, u.last_name
          FROM to_leaves l JOIN users u ON u.user_id = l.to_id
         WHERE (l.leave_date >= CURRENT_DATE OR l.leave_date IS NULL)
@@ -365,7 +450,22 @@ export class FleetService implements OnModuleInit {
       name: `${x.first_name} ${x.last_name}`,
       reason: x.reason as string,
       date: (x.leave_date as string) ?? '',
+      status: (x.status as string) ?? 'Pending',
     }))
+  }
+
+  async reviewLeave(id: string, status: 'Approved' | 'Rejected') {
+    const n = Number(id)
+    if (!Number.isInteger(n)) return { ok: false, error: 'Invalid leave.' }
+    const r = await this.db.query(
+      `UPDATE to_leaves
+          SET status = $1
+        WHERE id = $2 AND status = 'Pending'
+        RETURNING to_id, leave_date`,
+      [status, n],
+    )
+    if (!r.rows[0]) return { ok: false, error: 'Leave request not found or already reviewed.' }
+    return { ok: true }
   }
 
   // Remove a marked leave (officer is coming after all → back to available).

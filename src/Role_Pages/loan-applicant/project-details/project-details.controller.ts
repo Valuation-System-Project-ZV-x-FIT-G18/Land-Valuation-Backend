@@ -12,15 +12,10 @@ import {
   UseInterceptors,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
-import { diskStorage } from 'multer'
-import { extname, join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { memoryStorage } from 'multer'
 import type { Response } from 'express'
 import { ProjectDetailsService } from './project-details.service'
 import { CreateProjectDetailsDto, UpdateProjectDetailsDto } from './dto/project-details.dto'
-
-const uploadDir = join(process.cwd(), 'uploads')
-if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 
 @Controller('applicant/project-details')
 export class ProjectDetailsController {
@@ -43,7 +38,8 @@ export class ProjectDetailsController {
     const f = await this.projectDetails.attachment(Number(draftId), docType ?? '')
     if (!f) { res.status(404).json({ error: 'File not found.' }); return }
     res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(f.fileName)}`)
-    res.sendFile(join(uploadDir, f.filePath))
+    if (!f.data) { res.status(404).json({ error: 'Object not found in Supabase Storage.' }); return }
+    res.setHeader('Content-Type', f.mime || 'application/octet-stream'); res.send(f.data)
   }
 
   // POST /api/applicant/project-details — save a new draft.
@@ -57,11 +53,7 @@ export class ProjectDetailsController {
   @Post(':id/file')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (_req, file, cb) =>
-          cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`),
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )

@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
+import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
 
 type Row = Record<string, unknown>
 
@@ -14,7 +15,7 @@ type Row = Record<string, unknown>
 export class ProjectDetailsService implements OnModuleInit {
   private readonly logger = new Logger(ProjectDetailsService.name)
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService, private readonly storage: ObjectStorageService) {}
 
   async onModuleInit() {
     try {
@@ -30,6 +31,9 @@ export class ProjectDetailsService implements OnModuleInit {
            updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
          )`,
       )
+      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS file_data BYTEA`)
+      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
       // Migration: an earlier version of this table had applicant_nic as the
       // PRIMARY KEY (one draft per applicant). Move to a proper id PK so an
       // applicant can have several drafts; safe/idempotent to re-run.
@@ -37,8 +41,20 @@ export class ProjectDetailsService implements OnModuleInit {
       await this.db.query(`ALTER TABLE applicant_project_details ADD COLUMN IF NOT EXISTS label VARCHAR(100) NOT NULL DEFAULT ''`)
       await this.db.query(`ALTER TABLE applicant_project_details ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'Pending'`)
       await this.db.query(`ALTER TABLE applicant_project_details ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
-      await this.db.query(`ALTER TABLE applicant_project_details DROP CONSTRAINT IF EXISTS applicant_project_details_pkey`)
-      await this.db.query(`ALTER TABLE applicant_project_details ADD CONSTRAINT applicant_project_details_pkey PRIMARY KEY (id)`)
+      // Only replace the legacy NIC primary key. Do not drop the current id
+      // primary key because draft-file foreign keys depend on it.
+      await this.db.query(`
+        DO $$ BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint c
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+            WHERE c.conrelid = 'applicant_project_details'::regclass
+              AND c.contype = 'p' AND a.attname = 'id'
+          ) THEN
+            ALTER TABLE applicant_project_details DROP CONSTRAINT IF EXISTS applicant_project_details_pkey CASCADE;
+            ALTER TABLE applicant_project_details ADD CONSTRAINT applicant_project_details_pkey PRIMARY KEY (id);
+          END IF;
+        END $$`)
       await this.db.query(
         `CREATE INDEX IF NOT EXISTS applicant_project_details_nic_idx ON applicant_project_details (applicant_nic)`,
       )
@@ -146,7 +162,7 @@ export class ProjectDetailsService implements OnModuleInit {
     draftId: number,
     nic: string,
     docType: string,
-    file?: { originalname: string; filename: string },
+    file?: Express.Multer.File,
   ) {
     const t = (docType ?? '').trim()
     if (!Number.isInteger(draftId) || !t || !file) return { ok: false, error: 'Missing details or file.' }
@@ -157,13 +173,14 @@ export class ProjectDetailsService implements OnModuleInit {
     )
     if (!owns.rows[0]) return { ok: false, error: 'Draft not found.' }
 
+    const stored = await this.storage.store(file, `applicant-project-drafts/${draftId}/${t}`)
     await this.db.query(
-      `INSERT INTO applicant_project_detail_files (draft_id, doc_type, file_name, file_path)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO applicant_project_detail_files (draft_id, doc_type, file_name, file_path, file_mime, file_data, object_key)
+       VALUES ($1, $2, $3, '', $4, $5, $6)
        ON CONFLICT (draft_id, doc_type)
-       DO UPDATE SET file_name = EXCLUDED.file_name, file_path = EXCLUDED.file_path,
+       DO UPDATE SET file_name = EXCLUDED.file_name, file_path = '', file_mime = EXCLUDED.file_mime, file_data = EXCLUDED.file_data, object_key = EXCLUDED.object_key,
                      created_at = now()`,
-      [draftId, t, file.originalname, file.filename],
+      [draftId, t, file.originalname, file.mimetype, stored.databaseFallback, stored.objectKey],
     )
     return { ok: true }
   }
@@ -173,13 +190,14 @@ export class ProjectDetailsService implements OnModuleInit {
   async attachment(draftId: number, docType: string) {
     if (!Number.isInteger(draftId)) return null
     const r = await this.db.query(
-      `SELECT file_name, file_path FROM applicant_project_detail_files
+      `SELECT file_name, file_mime, object_key FROM applicant_project_detail_files
         WHERE draft_id = $1 AND doc_type = $2`,
       [draftId, (docType ?? '').trim()],
     )
     const f = r.rows[0]
-    if (!f || !f.file_path) return null
-    return { fileName: f.file_name as string, filePath: f.file_path as string }
+    if (!f?.object_key) return null
+    const objectData = await this.storage.read(f.object_key as string)
+    return { fileName: f.file_name as string, mime: f.file_mime as string, data: objectData }
   }
 
   // Called once a project has actually been created from this draft, so it

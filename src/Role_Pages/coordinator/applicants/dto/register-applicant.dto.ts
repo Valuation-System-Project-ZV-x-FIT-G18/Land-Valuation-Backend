@@ -1,5 +1,5 @@
 import { IsEmail, IsISO8601, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator'
-import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_PATTERN } from '../../../../Common_Pages/validation/patterns'
+import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, PHONE_MESSAGE, REQUIRED_PHONE_PATTERN, STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_PATTERN } from '../../../../Common_Pages/validation/patterns'
 
 export class RegisterApplicantDto {
   @IsString() @MinLength(2, { message: 'First name must be at least 2 characters.' }) @MaxLength(60)
@@ -20,7 +20,7 @@ export class RegisterApplicantDto {
 
   @IsEmail({}, { message: 'Enter a valid email address.' }) @MaxLength(100) email: string
 
-  @Matches(/^7[1-9]\d{7}$/, { message: 'Enter a valid 9-digit mobile number starting with 7 (e.g. 712345678).' }) phone: string
+  @Matches(REQUIRED_PHONE_PATTERN, { message: PHONE_MESSAGE }) phone: string
 
   @IsString() @MaxLength(100)
   @Matches(STRONG_PASSWORD_PATTERN, { message: STRONG_PASSWORD_MESSAGE }) password: string

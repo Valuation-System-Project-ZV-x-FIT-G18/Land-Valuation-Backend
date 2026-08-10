@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS project_files (
 -- Migration: project documents are stored in PostgreSQL rather than relying
 -- on the server's local filesystem.
 ALTER TABLE project_files ADD COLUMN IF NOT EXISTS file_data BYTEA;
+ALTER TABLE project_files ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT '';
 
 -- Valuations raised against a project.
 --   id           = surrogate PRIMARY KEY (one row per valuation).
@@ -209,6 +210,9 @@ CREATE TABLE IF NOT EXISTS valuations (
   applicant_nic        VARCHAR(20)  NOT NULL DEFAULT '',
   details              JSONB        NOT NULL DEFAULT '{}',
   request_letter_path  VARCHAR(255) NOT NULL DEFAULT '',
+  request_letter_name  VARCHAR(255) NOT NULL DEFAULT '',
+  request_letter_mime  VARCHAR(100) NOT NULL DEFAULT '',
+  request_letter_data  BYTEA,
   status               VARCHAR(40)  NOT NULL DEFAULT 'Created',
   technical_officer_id VARCHAR(20)  NOT NULL DEFAULT '', -- users.user_id of the assigned TO
   assigned_date        VARCHAR(20)  NOT NULL DEFAULT '', -- scheduled site-visit date
@@ -216,6 +220,15 @@ CREATE TABLE IF NOT EXISTS valuations (
   rejection_reason     TEXT         NOT NULL DEFAULT '', -- set if the TO rejects
   created_at           TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+ALTER TABLE valuations ADD COLUMN IF NOT EXISTS request_letter_name VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE valuations ADD COLUMN IF NOT EXISTS request_letter_mime VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE valuations ADD COLUMN IF NOT EXISTS request_letter_data BYTEA;
+ALTER TABLE valuations ADD COLUMN IF NOT EXISTS request_letter_object_key VARCHAR(1024) NOT NULL DEFAULT '';
+
+-- Original uploads live in private object storage. These text keys locate the
+-- objects; BYTEA/path columns remain temporarily for legacy-record reads.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_object_key VARCHAR(1024) NOT NULL DEFAULT '';
 
 -- Migration: add the technical-officer columns to an existing valuations table.
 ALTER TABLE valuations ADD COLUMN IF NOT EXISTS technical_officer_id VARCHAR(20) NOT NULL DEFAULT '';
