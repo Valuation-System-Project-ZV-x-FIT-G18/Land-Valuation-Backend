@@ -394,6 +394,18 @@ export class FleetService implements OnModuleInit {
     if (!Number.isInteger(n)) return { ok: false, error: 'Invalid assignment.' }
     const id = (toId ?? '').trim()
     if (!id) return { ok: false, error: 'Invalid officer.' }
+
+    const current = await this.db.query(
+      `SELECT status FROM valuations WHERE id = $1 AND technical_officer_id = $2 LIMIT 1`,
+      [n, id],
+    )
+    const currentStatus = current.rows[0]?.status as string | undefined
+    if (!currentStatus) return { ok: false, error: 'Assignment not found.' }
+    if (currentStatus === TO_ACCEPTED) return { ok: true }
+    if (currentStatus !== TO_ASSIGNED) {
+      return { ok: false, error: 'This assignment has already been actioned.' }
+    }
+
     const r = await this.db.query(
       `UPDATE valuations
           SET status = $1, rejection_reason = ''
@@ -402,7 +414,15 @@ export class FleetService implements OnModuleInit {
       [TO_ACCEPTED, n, id, TO_ASSIGNED],
     )
     const projectId = r.rows[0]?.project_id as string | undefined
-    if (!projectId) return { ok: false, error: 'Assignment not found or already actioned.' }
+    if (!projectId) {
+      const latest = await this.db.query(
+        `SELECT status FROM valuations WHERE id = $1 AND technical_officer_id = $2 LIMIT 1`,
+        [n, id],
+      )
+      return latest.rows[0]?.status === TO_ACCEPTED
+        ? { ok: true }
+        : { ok: false, error: 'This assignment has already been actioned.' }
+    }
     await this.db.query(`UPDATE projects SET status = $1 WHERE project_id = $2`, [
       TO_ACCEPTED,
       projectId,
