@@ -12,7 +12,9 @@ export type Comparable = {
   extentPerches: number
   distanceKm: number
   pricePerPerch: number
-  evidenceType: string // 'Recent Land Sale' | 'Current Market Asking Price'
+  evidenceType: string // always 'Nearby Comparable Land'
+  propertyType: string
+  roadAccess: string
   source: string // 'Ikman' | 'LankaPropertyWeb' | 'Homeland'
   note: string
 }
@@ -101,9 +103,8 @@ export class NearbyService implements OnModuleInit {
     }
   }
 
-  // The 5 nearest comparable land listings, researched from ACROSS THE WEB via
-  // Google-Search-grounded AI. Each result keeps the actual source it was found
-  // on (a site name or URL). All fields are editable afterwards.
+  // The nearest suitable land parcels/listings, filtered first by distance,
+  // then by recency and similarity to the subject land.
   async comparables(
     projectId: string,
   ): Promise<{ comparables: Comparable[]; aiUsed: boolean; marketTrend: string }> {
@@ -111,21 +112,33 @@ export class NearbyService implements OnModuleInit {
     if (!loc) return { comparables: [], aiUsed: false, marketTrend: '' }
     const area = [loc.villageTown, loc.district].filter(Boolean).join(', ') || 'the area'
 
+    // Prefer a dedicated search provider for listing discovery. Unlike Gemini,
+    // this remains available when the generative-AI quota is exhausted.
+    const serpComparables = await this.searchPropertyPortals(area, loc.latitude, loc.longitude)
+    if (serpComparables.length) {
+      return { comparables: serpComparables, aiUsed: true, marketTrend: '' }
+    }
+
     if (this.ai.isEnabled()) {
       try {
         const prompt =
           `You are a Sri Lankan property market researcher with live web access. ` +
-          `Search the whole internet — ANY Sri Lankan property portal, classified or agent site ` +
-          `(e.g. ikman.lk, lankapropertyweb.com, patpat.lk, lamudi, house.lk, real-estate agents, news) — ` +
-          `for the 5 NEAREST and most relevant CURRENT land price evidences for a ${loc.propertyType} ` +
-          `of about ${loc.extentPerches || 'unknown'} perches in ${area}, and judge the current land ` +
-          `market trend of that area. ` +
-          `Return STRICT JSON only: an object ` +
+          `Search Sri Lankan property portals, classified sites and real-estate agent sites for up to three ` +
+          `NEARBY COMPARABLE LAND PARCELS for the subject property at ${area}` +
+          `${loc.latitude != null && loc.longitude != null ? ` (GPS ${loc.latitude}, ${loc.longitude})` : ''}. ` +
+          `The subject is ${loc.propertyType} of approximately ${loc.extentPerches || 'unknown'} perches. ` +
+          `Apply these filters in order: (1) closest distance first - preferably within 500 m and never beyond ` +
+          `2 km; (2) a current listing or evidence date within the last 2 years; (3) bare/residential land of ` +
+          `the same permitted use; (4) similar extent, road access, frontage, ground condition and utilities. ` +
+          `Exclude houses, buildings, commercial premises and agricultural land unless clearly comparable. ` +
+          `Sort the final results from nearest to farthest and judge the current land market trend. ` +
+          `Reject evidence older than 2 years unless no newer evidence exists, in which case clearly state the age ` +
+          `and required market-time adjustment in the note. Return STRICT JSON only: an object ` +
           `{"marketTrend": one of "going up steadily"|"staying the same"|"slowing down", ` +
           `"comparables": [ up to 5 objects with keys ` +
-          `area, refNo, saleDate (YYYY-MM-DD, or "" for a current asking price), extentPerches (number), ` +
-          `distanceKm (number, approx km from ${area}), pricePerPerch (number in LKR), ` +
-          `evidenceType ("Recent Land Sale" or "Current Market Asking Price"), ` +
+          `area, refNo, saleDate (YYYY-MM-DD), extentPerches (number), ` +
+          `distanceKm (number from the subject property), pricePerPerch (number in LKR), ` +
+          `evidenceType (always "Nearby Comparable Land"), propertyType, roadAccess, ` +
           `source (the ACTUAL website name or full URL where you found this listing), ` +
           `note (short detail) ] }. ` +
           `Use real current listings and their real per-perch prices. No markdown.`
@@ -134,15 +147,178 @@ export class NearbyService implements OnModuleInit {
         const arr = Array.isArray(parsed) ? parsed : (parsed?.comparables ?? [])
         const trend = TRENDS.includes(parsed?.marketTrend) ? parsed.marketTrend : ''
         if (Array.isArray(arr) && arr.length) {
-          return { comparables: arr.slice(0, 5).map((c: Row) => this.clean(c)), aiUsed: true, marketTrend: trend }
+          const now = Date.now()
+          const subjectExtent = Number(loc.extentPerches) || 0
+          const suitable = arr
+            .map((c: Row) => this.clean(c))
+            .filter((c: Comparable) => c.distanceKm > 0 && c.distanceKm <= 2)
+            .filter((c: Comparable) => /bare|residential|vacant/i.test(c.propertyType))
+            .map((c: Comparable) => {
+              const ageYears = c.saleDate ? (now - new Date(c.saleDate).getTime()) / 31_557_600_000 : 0
+              const distanceScore = c.distanceKm <= 0.5 ? 1_000 - c.distanceKm * 100 : 500 - c.distanceKm * 100
+              const recencyScore = !c.saleDate ? 80 : ageYears <= 1 ? 220 : ageYears <= 2 ? 100 : -500
+              const typeScore = /bare|vacant/i.test(c.propertyType) ? 260 : /residential/i.test(c.propertyType) ? 220 : 0
+              const extentScore = subjectExtent > 0 && c.extentPerches > 0
+                ? Math.max(0, 120 - Math.abs(c.extentPerches - subjectExtent) / subjectExtent * 120)
+                : 0
+              const accessScore = c.roadAccess ? 40 : 0
+              return { comparable: c, score: distanceScore + recencyScore + typeScore + extentScore + accessScore }
+            })
+            .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
+            .slice(0, 3)
+            .map((ranked: { comparable: Comparable }) => ranked.comparable)
+          if (suitable.length) return { comparables: suitable, aiUsed: true, marketTrend: trend }
         }
       } catch (err) {
         this.logger.error(`Nearby comparables AI failed: ${(err as Error).message}`)
       }
     }
-    // Fallback: 5 blank rows for manual entry (officer fills the source).
-    const blanks = Array.from({ length: 5 }, () => this.clean({}))
-    return { comparables: blanks, aiUsed: false, marketTrend: '' }
+    // Never manufacture five empty "results". An unavailable search returns an
+    // honest empty state; the officer may then add a verified land individually.
+    return { comparables: [], aiUsed: false, marketTrend: '' }
+  }
+
+  private async searchPropertyPortals(area: string, subjectLat: number | null, subjectLng: number | null): Promise<Comparable[]> {
+    const key = process.env.SERPAPI_API_KEY
+    if (!key) return []
+
+    const queries = [
+      `site:ikman.lk/en/ad land for sale "${area}" "per perch"`,
+      `site:lankapropertyweb.com land for sale "${area}" "per perch"`,
+    ]
+
+    try {
+      const responses = await Promise.all(queries.map(async (q) => {
+        const params = new URLSearchParams({ engine: 'google', q, gl: 'lk', hl: 'en', api_key: key })
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 20_000)
+        try {
+          const response = await fetch(`https://serpapi.com/search.json?${params}`, { signal: controller.signal })
+          const body = await response.json() as { error?: string; organic_results?: Row[] }
+          if (!response.ok || body.error) throw new Error(body.error || `HTTP ${response.status}`)
+          return body.organic_results ?? []
+        } finally {
+          clearTimeout(timeout)
+        }
+      }))
+
+      const seen = new Set<string>()
+      const candidates = responses.flat()
+        .filter((result) => /ikman\.lk|lankapropertyweb\.com/i.test(String(result.link ?? '')))
+        .filter((result) => {
+          const link = String(result.link ?? '')
+          if (!link || seen.has(link)) return false
+          seen.add(link)
+          return true
+        })
+      const mapped = await Promise.all(candidates.slice(0, 8).map(async (result) => {
+        const comparable = this.comparableFromSearchResult(result, area)
+        comparable.distanceKm = await this.distanceFromSubject(
+          comparable.area, subjectLat, subjectLng,
+        )
+        return comparable
+      }))
+      const uniqueLands = new Map<string, Comparable>()
+      for (const comparable of mapped) {
+        const normalizedArea = comparable.area
+          .toLowerCase()
+          .replace(/\b(?:land|for|sale)\b/g, '')
+          .replace(/[^a-z0-9]+/g, '')
+        // Portal search results can expose the same advertisement through
+        // multiple URLs. Treat matching locality, extent and price as one land.
+        const fingerprint = [
+          normalizedArea,
+          comparable.extentPerches || '',
+          comparable.pricePerPerch || '',
+        ].join('|')
+        if (!uniqueLands.has(fingerprint)) uniqueLands.set(fingerprint, comparable)
+      }
+
+      return [...uniqueLands.values()]
+        .filter((result) => result.pricePerPerch > 0 || result.extentPerches > 0)
+        .sort((a, b) => {
+          if (a.distanceKm && b.distanceKm) return a.distanceKm - b.distanceKm
+          if (a.distanceKm) return -1
+          if (b.distanceKm) return 1
+          return 0
+        })
+        .slice(0, 3)
+    } catch (error) {
+      this.logger.error(`SerpApi property search failed: ${(error as Error).message}`)
+      return []
+    }
+  }
+
+  private comparableFromSearchResult(result: Row, fallbackArea: string): Comparable {
+    const title = String(result.title ?? '')
+    const snippet = String(result.snippet ?? '')
+    const text = `${title} ${snippet}`
+    const number = (value: string) => Number(value.replace(/,/g, '')) || 0
+    const priceMatch = text.match(/(?:rs\.?|lkr)\s*([\d,]+(?:\.\d+)?)\s*(?:\/-)?\s*(?:per\s*)?perch/i)
+      ?? text.match(/([\d,]+(?:\.\d+)?)\s*(?:lakh|lakhs)\s*(?:per\s*)?perch/i)
+    const extentMatch = text.match(/(?:land\s*size\s*:\s*)?([\d,.]+)\s*(perch(?:es)?|acre(?:s)?|rood(?:s)?|hectare(?:s)?)\b/i)
+    const isLakhs = !!priceMatch && /lakh/i.test(priceMatch[0])
+    const link = String(result.link ?? '')
+    const displayedDate = String(result.date ?? '')
+    const parsedDate = displayedDate ? new Date(displayedDate) : null
+
+    return {
+      area: title.replace(/\s*[-|].*$/, '').trim() || fallbackArea,
+      refNo: link,
+      saleDate: parsedDate && Number.isFinite(parsedDate.getTime()) ? parsedDate.toISOString().slice(0, 10) : '',
+      extentPerches: extentMatch ? this.extentInPerches(number(extentMatch[1]), extentMatch[2]) : 0,
+      distanceKm: 0,
+      pricePerPerch: priceMatch ? number(priceMatch[1]) * (isLakhs ? 100_000 : 1) : 0,
+      evidenceType: 'Nearby Comparable Land',
+      propertyType: 'Bare / Residential Land',
+      roadAccess: '',
+      source: link,
+      note: `${snippet}${snippet ? ' ' : ''}Distance and listing details require valuer verification.`,
+    }
+  }
+
+  private extentInPerches(value: number, unit: string): number {
+    if (/acre/i.test(unit)) return Math.round(value * 160 * 100) / 100
+    if (/rood/i.test(unit)) return Math.round(value * 40 * 100) / 100
+    if (/hectare/i.test(unit)) return Math.round(value * 395.36861 * 100) / 100
+    return value
+  }
+
+  private async distanceFromSubject(area: string, subjectLat: number | null, subjectLng: number | null): Promise<number> {
+    if (subjectLat == null || subjectLng == null || !area) return 0
+    try {
+      const place = area
+        .replace(/^land\s+for\s+sale\s*/i, '')
+        // Common listing spelling; OpenStreetMap records the official locality
+        // spelling as Kahandamodara.
+        .replace(/kahadamodara/ig, 'Kahandamodara')
+        .trim()
+      const words = place.split(/\s+/)
+      const queries = [place, ...(words.length > 2 ? [words.slice(0, -1).join(' ')] : [])]
+      let lat = NaN
+      let lng = NaN
+      for (const query of queries) {
+        const params = new URLSearchParams({
+          format: 'jsonv2', q: `${query}, Sri Lanka`, countrycodes: 'lk', limit: '1',
+        })
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
+          headers: { 'User-Agent': 'CODEHUB-Land-Valuation/1.0' },
+        })
+        if (!response.ok) continue
+        const results = await response.json() as { lat: string; lon: string }[]
+        lat = Number(results[0]?.lat)
+        lng = Number(results[0]?.lon)
+        if (Number.isFinite(lat) && Number.isFinite(lng)) break
+      }
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return 0
+      const radians = (degrees: number) => degrees * Math.PI / 180
+      const dLat = radians(lat - subjectLat)
+      const dLng = radians(lng - subjectLng)
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(radians(subjectLat)) * Math.cos(radians(lat)) * Math.sin(dLng / 2) ** 2
+      return Math.round(6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 100) / 100
+    } catch {
+      return 0
+    }
   }
 
   // The latest valuation's saved details (holds valuationPurpose, loanPurpose, …).
@@ -166,7 +342,9 @@ export class NearbyService implements OnModuleInit {
       extentPerches: Number(c.extentPerches) || 0,
       distanceKm: Number(c.distanceKm) || 0,
       pricePerPerch: Number(c.pricePerPerch) || 0,
-      evidenceType: c.evidenceType === 'Current Market Asking Price' ? c.evidenceType : 'Recent Land Sale',
+      evidenceType: 'Nearby Comparable Land',
+      propertyType: String(c.propertyType ?? 'Bare / Residential Land'),
+      roadAccess: String(c.roadAccess ?? ''),
       source: String(c.source ?? ''), // free text — the actual source found
       note: String(c.note ?? ''),
     }

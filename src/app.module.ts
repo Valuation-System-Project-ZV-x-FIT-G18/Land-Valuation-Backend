@@ -27,6 +27,7 @@ import { AiModule } from './Common_Pages/ai/ai.module'
 import { BanksModule } from './Role_Pages/coordinator/banks/banks.module'
 import { ObjectStorageModule } from './Common_Pages/storage/object-storage.module'
 import { ChatbotModule } from './Common_Pages/chatbot/chatbot.module'
+import { ValuerProfileModule } from './Role_Pages/manager/valuer-profile/valuer-profile.module'
 
 // The root module. It wires together all the feature modules.
 @Module({
@@ -58,6 +59,7 @@ import { ChatbotModule } from './Common_Pages/chatbot/chatbot.module'
     MappingModule, // /api/technical-officer/mapping
     DraftModule, // /api/technical-officer/draft
     ManagerDraftsModule, // /api/manager/drafts
+    ValuerProfileModule, // /api/manager/valuer-profile
     ReportAccessModule, // /api/client (bank view + applicant payment)
   ],
 })

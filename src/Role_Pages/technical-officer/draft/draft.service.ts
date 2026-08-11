@@ -157,23 +157,29 @@ export class DraftService implements OnModuleInit {
       siteBoundaryWest: String(insp.westBoundary ?? ''),
       accessFromBoundary: f('rightOfWayFrom', 'right_of_way_from'),
       // GPS & map
-      accessLocationDescription: map.access_description ?? '',
+      accessLocationDescription: desc.accessDescription ?? map.access_description ?? '',
       gpsCoordinates: map.lat != null ? `${map.lat}, ${map.lng}` : '',
       // Narrative descriptions
-      localityDescription: desc.localityDescription ?? '',
+      requestDescription: desc.requestDescription ?? '',
+      limitations: desc.limitations ?? '',
+      generalAssumptions: desc.generalAssumptions ?? '',
+      localityDescription: desc.situation ?? '',
+      extentDescription: desc.extentDescription ?? '',
       landDescription: desc.landDescription ?? '',
-      legalDescription: desc.legalParagraph ?? '',
+      legalDescription: desc.ownershipDescription ?? '',
       localAuthorityTax: desc.localAuthorityTax ?? '',
       streetLineBuildingLimits: desc.streetLineBuildingLimits ?? '',
       mandatoryRequirements: desc.mandatoryRequirements ?? '',
-      localityFacilities: desc.localityFacilities ?? '',
+      rentControlRegulation: desc.rentControlRegulation ?? '',
+      localityFacilities: desc.localityDescription ?? '',
+      certification: desc.certification ?? '',
       nearbyPropertyDetails: la.evidence?.marketSurveyStatement ?? '',
       previouslyValued: (la.basis?.previouslyValued ?? 'not valued').includes('previously') ? 'valued' : 'not valued',
       valuationText:
         calc.ratePerPerch
           ? `${calc.totalExtentPerches ?? ''} Perches @ Rs. ${Number(calc.ratePerPerch).toLocaleString('en-US')}/- per perch = Rs. ${Number(calc.marketValue ?? 0).toLocaleString('en-US')}/-.`
           : '',
-      conclusion: desc.conclusion ?? '',
+      conclusion: '',
       // Valuation/evidence tables the officer edited & saved in Generate Descriptions
       savedValuation: desc.valuation ?? '',
       savedEvidence: desc.evidence ?? '',
