@@ -8,9 +8,11 @@ export class RegisterApplicantDto {
   @IsString() @MinLength(1) @MaxLength(60)
   @Matches(NAME_PATTERN, { message: NAME_MESSAGE }) lastName: string
 
-  @IsString() @MaxLength(60) initials: string
+  @IsString() @MaxLength(60, { message: 'Name with initials cannot exceed 60 characters.' }) initials: string
 
-  @IsOptional() @IsString() @MaxLength(150) applicantBusinessName?: string
+  @IsOptional() @IsString()
+  @MaxLength(150, { message: 'Business name cannot exceed 150 characters.' })
+  applicantBusinessName?: string
 
   @Matches(NIC_PATTERN, { message: NIC_MESSAGE }) nic: string
 
