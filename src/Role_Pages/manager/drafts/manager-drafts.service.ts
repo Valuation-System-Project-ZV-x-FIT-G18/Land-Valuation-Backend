@@ -104,17 +104,35 @@ export class ManagerDraftsService implements OnModuleInit {
   }
 
   // Save the (edited) report + move the draft to a new review status.
-  async action(projectId: string, reportHtml: string | undefined, status: string, reason = '') {
+  async fields(projectId: string) {
+    const p = projectId.trim()
+    const result = await this.db.query(
+      `SELECT d.data AS draft_data, i.data AS inspection_data, la.data AS analysis_data
+         FROM projects p
+         LEFT JOIN drafts d ON d.project_id = p.project_id
+         LEFT JOIN inspections i ON i.project_id = p.project_id
+         LEFT JOIN land_analyses la ON la.project_id = p.project_id
+        WHERE p.project_id = $1`,
+      [p],
+    )
+    const row = result.rows[0] ?? {}
+    return {
+      inspectionDate: String(row.inspection_data?.inspectionDate ?? ''),
+      valuationDate: String(row.draft_data?.valuationDate ?? row.analysis_data?.summary?.valuationDate ?? ''),
+    }
+  }
+
+  async action(projectId: string, reportHtml: string | undefined, status: string, reason = '', valuationDate?: string) {
     const p = (projectId ?? '').trim()
     if (!p || !status) return { ok: false, error: 'Missing project or status.' }
     if (reportHtml != null) {
       await this.db.query(
         `INSERT INTO drafts (project_id, data, review_status, reject_reason)
-         VALUES ($1, jsonb_build_object('reportHtml', $2::text), $3, $4)
+         VALUES ($1, jsonb_build_object('reportHtml', $2::text, 'valuationDate', $5::text), $3, $4)
          ON CONFLICT (project_id) DO UPDATE SET
-           data = COALESCE(drafts.data, '{}'::jsonb) || jsonb_build_object('reportHtml', $2::text),
+           data = COALESCE(drafts.data, '{}'::jsonb) || jsonb_build_object('reportHtml', $2::text, 'valuationDate', $5::text),
            review_status = $3, reject_reason = $4, created_at = now()`,
-        [p, reportHtml, status, reason],
+        [p, reportHtml, status, reason, valuationDate ?? ''],
       )
     } else {
       await this.db.query(

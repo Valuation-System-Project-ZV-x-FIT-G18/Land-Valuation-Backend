@@ -8,6 +8,7 @@ export class SaveValuerProfileDto {
   @IsString() @MaxLength(500) professionalQualifications: string
   @IsString() @MinLength(1) @MaxLength(50) ivslRegistrationNumber: string
   @IsOptional() @IsString() @MaxLength(50) ricsRegistrationNumber?: string
+  @IsOptional() @IsString() @MaxLength(30) ricsMembership?: string
   @IsIn(['Confirmed', 'Not Confirmed']) relevantExperience: string
   @IsIn(['Active', 'Expired', 'Not Available']) indemnityStatus: string
   @IsOptional() @IsString() @MaxLength(100) indemnityPolicyNumber?: string

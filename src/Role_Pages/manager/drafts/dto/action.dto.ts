@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator'
+import { IsDateString, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator'
 
 export const REVIEW_STATUSES = [
   'pending_l3', 'pending_l2', 'pending_l1',
@@ -12,4 +12,5 @@ export class DraftActionDto {
   @IsOptional() @IsString() reportHtml?: string
   @IsIn(REVIEW_STATUSES, { message: 'Invalid review status.' }) status: string
   @IsOptional() @IsString() @MaxLength(1000) reason?: string
+  @IsOptional() @IsDateString() valuationDate?: string
 }

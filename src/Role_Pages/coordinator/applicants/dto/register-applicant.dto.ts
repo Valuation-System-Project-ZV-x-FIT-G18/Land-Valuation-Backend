@@ -10,6 +10,8 @@ export class RegisterApplicantDto {
 
   @IsString() @MaxLength(60) initials: string
 
+  @IsOptional() @IsString() @MaxLength(150) applicantBusinessName?: string
+
   @Matches(/^(\d{9}[VvXx]|\d{12})$/, { message: 'Enter a valid NIC.' }) nic: string
 
   // @IsOptional() only skips null/undefined, not '' — use @ValidateIf so a

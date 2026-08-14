@@ -87,9 +87,9 @@ The basis of this valuation is market value, forced sale value and insurance val
 5.2.1 EXTENT
 Survey Plan : Lot No. #43 in Survey Plan No. #44 dated #45 made by #46 Licensed Surveyor.
    Extent  : #51 A - #52 R - #53 P   (Hectares: #54)
-Deed        : Deed of Transfer No. #47 dated #48 attested by #49 Attorney at Law & #50
+Deed        : #205 No. #47 dated #48 attested by #49 Attorney at Law & #50
    Extent  : #55 A - #56 R - #57 P   (Hectares: #58)
-The extent mentioned in the above survey plan tallies with the above deed.
+#206
 
 5.2.2 VALIDITY OF THE SURVEY PLAN
 Date of Survey Plan : #59    Exceeding over 10 years : #60    Endorsement / new survey plan : #61
@@ -144,7 +144,7 @@ Additional photographs       : #89
 #189
 
 8. APPROACH AND METHOD TO THE VALUATION
-In assessing the subject property, I have applied the Contractor's Test Method (DRC) of valuation under the Cost Approach.
+#207
 
 9. EVIDENCE OF LAND VALUES & RENTALS
 9.1 RICS EVIDENCE HIERARCHY
@@ -187,7 +187,7 @@ export const NUM_TO_KEY: Record<number, string> = {
   42: 'localityDescription', 43: 'lotNo', 44: 'surveyPlanNo', 45: 'surveyDate', 46: 'surveyorName', 47: 'deedNo',
   48: 'deedDate', 49: 'attorney', 50: 'notary', 51: 'extentAcres', 52: 'extentRoods', 53: 'extentPerches',
   54: 'extentHectares', 55: 'deedAcres', 56: 'deedRoods', 57: 'deedPerches', 58: 'deedHectares', 59: 'surveyDate',
-  60: 'planOver10Years', 61: 'planEndorsementOrNew', 62: 'boundaryNorth', 63: 'boundaryEast', 64: 'boundarySouth',
+  60: 'planOver10Years', 61: 'surveyPlanRequiredAction', 62: 'boundaryNorth', 63: 'boundaryEast', 64: 'boundarySouth',
   65: 'boundaryWest', 66: 'siteBoundaryNorth', 67: 'siteBoundaryEast', 68: 'siteBoundarySouth', 69: 'siteBoundaryWest',
   70: 'accessFromBoundary', 73: 'accessLocationDescription', 74: 'gpsCoordinates', 75: 'propertyLocationCity',
   77: 'landDescription', 79: 'photoAccessRoad', 80: 'photoRouteFromMainRoad', 81: 'photoFrontView',
@@ -196,14 +196,25 @@ export const NUM_TO_KEY: Record<number, string> = {
   92: 'streetLineBuildingLimits', 188: 'mandatoryRequirements', 189: 'localityFacilities', 190: 'nearbyPropertyDetails',
   191: 'previouslyValued', 192: 'valuationText', 193: 'conclusion', 194: 'valuationDate', 195: 'marketValueWords',
   196: 'marketValue', 197: 'valuationDate', 198: 'forcedSaleValueWords', 199: 'forcedSaleValue', 200: 'lotNo',
-  201: 'surveyPlanNo', 202: 'surveyDate', 203: 'surveyorName', 204: 'bankName',
+  201: 'surveyPlanNo', 202: 'surveyDate', 203: 'surveyorName', 204: 'bankName', 205: 'deedType',
+  206: 'extentVerificationStatement', 207: 'valuationApproachStatement',
 }
 
 // Image placeholders — replaced with a labelled marker in the text draft.
 export const IMAGE_MARKERS: Record<number, string> = {
-  71: '[ Survey Plan image ]',
-  72: '[ Satellite view image ]',
-  76: '[ Location map image ]',
-  78: '[ Front view of the land image ]',
-  89: '[ Additional photographs ]',
+  71: '{surveyPlanImage}',
+  72: '{satelliteLocationImage}',
+  76: '{locationMapImage}',
+  78: '{photoFrontView}',
+  79: '{photoAccessRoad}',
+  80: '{photoRouteFromMainRoad}',
+  81: '{photoFrontView}',
+  82: '{photoRearView}',
+  83: '{photoLeftSide}',
+  84: '{photoRightSide}',
+  85: '{photoEastBoundary}',
+  86: '{photoSouthBoundary}',
+  87: '{photoWestBoundary}',
+  88: '{photoNorthBoundary}',
+  89: '{additionalLandPhotographs}',
 }

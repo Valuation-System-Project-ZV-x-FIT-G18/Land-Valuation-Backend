@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common'
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import * as bcrypt from 'bcryptjs'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
@@ -10,7 +10,7 @@ import { toStoredPhone } from '../../../Common_Pages/validation/patterns'
 // Loan applicants are stored in the shared `users` table with role 'Loan Applicant'.
 // The NIC is used as their user_id (login id for external login).
 @Injectable()
-export class ApplicantsService {
+export class ApplicantsService implements OnModuleInit {
   private readonly logger = new Logger(ApplicantsService.name)
 
   constructor(
@@ -19,10 +19,18 @@ export class ApplicantsService {
     private readonly notifications: NotificationsService,
   ) {}
 
+  async onModuleInit() {
+    try {
+      await this.db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS applicant_business_name VARCHAR(150) NOT NULL DEFAULT ''`)
+    } catch (err) {
+      this.logger.error(`Could not ensure applicant business-name field: ${(err as Error).message}`)
+    }
+  }
+
   // Find a registered loan applicant by NIC.
   async findByNic(nic: string) {
     const result = await this.db.query(
-      `SELECT user_id, first_name, last_name, initials, nic, email, phone,
+      `SELECT user_id, first_name, last_name, initials, applicant_business_name, nic, email, phone,
               date_of_birth, province, district, city, postal_code, address
          FROM users
         WHERE nic = $1 AND role = 'Loan Applicant'
@@ -35,6 +43,7 @@ export class ApplicantsService {
       userId: row.user_id as string,
       name: `${row.first_name} ${row.last_name}`.trim(),
       initials: (row.initials as string) ?? '',
+      applicantBusinessName: (row.applicant_business_name as string) ?? '',
       nic: row.nic as string,
       email: (row.email as string) ?? '',
       phone: (row.phone as string) ?? '',
@@ -69,10 +78,10 @@ export class ApplicantsService {
     try {
       await this.db.query(
         `INSERT INTO users
-           (user_id, first_name, last_name, initials, nic, role, email, phone,
+           (user_id, first_name, last_name, initials, applicant_business_name, nic, role, email, phone,
             date_of_birth, province, district, city, postal_code, address, password_hash,
             must_change_password)
-         VALUES ($1, $2, $3, $4, $1, 'Loan Applicant', $5, $6, $7, $8, $9, $10, $11, $12, $13,
+         VALUES ($1, $2, $3, $4, $5, $1, 'Loan Applicant', $6, $7, $8, $9, $10, $11, $12, $13, $14,
             true)
          ON CONFLICT (user_id) DO NOTHING`,
         [
@@ -80,6 +89,7 @@ export class ApplicantsService {
           data.firstName.trim(),
           data.lastName.trim(),
           data.initials.trim(),
+          (data.applicantBusinessName ?? '').trim(),
           data.email.trim(),
           toStoredPhone(data.phone),
           data.dateOfBirth || null,

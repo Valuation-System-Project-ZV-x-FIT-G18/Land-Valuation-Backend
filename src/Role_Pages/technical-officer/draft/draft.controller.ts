@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common'
+import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common'
+import type { Response } from 'express'
 import { DraftService } from './draft.service'
+import { DocxReportService } from './docx-report.service'
 import { SaveDraftDto } from './dto/save-draft.dto'
 
 @Controller('technical-officer/draft')
 export class DraftController {
-  constructor(private readonly draft: DraftService) {}
+  constructor(private readonly draft: DraftService, private readonly docx: DocxReportService) {}
 
   // GET /fill?projectId=...
   @Get('fill')
@@ -17,6 +19,17 @@ export class DraftController {
   async build(@Query('projectId') projectId: string) {
     const res = await this.draft.buildValues(projectId ?? '')
     return res ?? { error: 'Project not found.' }
+  }
+
+  // GET /word?projectId=... — editable DOCX generated from the canonical template.
+  @Get('word')
+  async word(@Query('projectId') projectId: string, @Res() res: Response) {
+    const id = (projectId ?? '').trim()
+    const file = await this.docx.generate(id)
+    if (!file) { res.status(404).json({ error: 'Project not found.' }); return }
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    res.setHeader('Content-Disposition', `attachment; filename="Valuation-Report-${id}.docx"`)
+    res.send(file)
   }
 
   // GET ?projectId=...
