@@ -1,5 +1,5 @@
 import { IsEmail, IsString, Matches, MaxLength, MinLength } from 'class-validator'
-import { PHONE_MESSAGE, REQUIRED_PHONE_PATTERN } from '../../../Common_Pages/validation/patterns'
+import { NIC_MESSAGE, NIC_PATTERN, PHONE_MESSAGE, REQUIRED_PHONE_PATTERN } from '../../../Common_Pages/validation/patterns'
 
 export class CreateValuationDto {
   @IsString()
@@ -14,9 +14,7 @@ export class CreateValuationDto {
   @MaxLength(100)
   email: string
 
-  @Matches(/^(\d{9}[VvXx]|\d{12})$/, {
-    message: 'Enter a valid NIC: 12 digits, or 9 digits followed by V.',
-  })
+  @Matches(NIC_PATTERN, { message: NIC_MESSAGE })
   nic: string
 
   @IsString()

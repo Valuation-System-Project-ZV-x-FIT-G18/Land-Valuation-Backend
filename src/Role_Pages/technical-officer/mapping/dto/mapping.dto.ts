@@ -1,4 +1,4 @@
-import { IsArray, IsNumber, IsObject, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator'
+import { IsArray, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator'
 
 export class GenerateAccessDto {
   @IsString() @MinLength(1) @MaxLength(20) projectId: string

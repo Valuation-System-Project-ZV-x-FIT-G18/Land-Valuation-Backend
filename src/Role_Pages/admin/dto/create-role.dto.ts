@@ -1,5 +1,5 @@
 import { IsEmail, IsIn, IsISO8601, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator'
-import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, PHONE_MESSAGE, PHONE_PATTERN, STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_PATTERN } from '../../../Common_Pages/validation/patterns'
+import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, NIC_MESSAGE, NIC_PATTERN, PHONE_MESSAGE, PHONE_PATTERN, POSTAL_CODE_MESSAGE, POSTAL_CODE_PATTERN, STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_PATTERN } from '../../../Common_Pages/validation/patterns'
 
 export const STAFF_ROLES = [
   'Admin', 'Coordinator', 'Technical Officer',
@@ -17,7 +17,7 @@ export class CreateRoleDto {
 
   @IsOptional() @IsString() @MaxLength(60) initials?: string
 
-  @Matches(/^(\d{9}[VvXx]|\d{12})$/, { message: 'Enter a valid NIC.' }) nic: string
+  @Matches(NIC_PATTERN, { message: NIC_MESSAGE }) nic: string
 
   @IsEmail({}, { message: 'Enter a valid email address.' }) @MaxLength(100) email: string
 
@@ -43,6 +43,7 @@ export class CreateRoleDto {
   @IsOptional() @IsString() @MaxLength(60) district?: string
   @IsOptional() @IsString() @MaxLength(60)
   @Matches(CITY_PATTERN, { message: CITY_MESSAGE }) city?: string
-  @IsOptional() @IsString() @MaxLength(10) postalCode?: string
+  @IsOptional() @IsString() @MaxLength(10)
+  @Matches(POSTAL_CODE_PATTERN, { message: POSTAL_CODE_MESSAGE }) postalCode?: string
   @IsOptional() @IsString() @MaxLength(255) address?: string
 }
