@@ -32,6 +32,7 @@ export class ManagerDraftsService implements OnModuleInit {
       await this.db.query(`ALTER TABLE drafts ALTER COLUMN review_status TYPE VARCHAR(40)`)
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS reject_reason TEXT NOT NULL DEFAULT ''`)
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT false`)
+      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS report_price NUMERIC(14,2) NOT NULL DEFAULT 0`)
     } catch (err) {
       this.logger.error(`Manager drafts setup failed: ${(err as Error).message}`)
     }
@@ -122,9 +123,12 @@ export class ManagerDraftsService implements OnModuleInit {
     }
   }
 
-  async action(projectId: string, reportHtml: string | undefined, status: string, reason = '', valuationDate?: string) {
+  async action(projectId: string, reportHtml: string | undefined, status: string, reason = '', valuationDate?: string, reportPrice?: number) {
     const p = (projectId ?? '').trim()
     if (!p || !status) return { ok: false, error: 'Missing project or status.' }
+    if (status === 'locked' && (!Number.isFinite(reportPrice) || Number(reportPrice) <= 0)) {
+      return { ok: false, error: 'A valid report price is required before locking.' }
+    }
     if (reportHtml != null) {
       await this.db.query(
         `INSERT INTO drafts (project_id, data, review_status, reject_reason)
@@ -140,6 +144,9 @@ export class ManagerDraftsService implements OnModuleInit {
          ON CONFLICT (project_id) DO UPDATE SET review_status = $2, reject_reason = $3, created_at = now()`,
         [p, status, reason],
       )
+    }
+    if (status === 'locked') {
+      await this.db.query(`UPDATE drafts SET report_price = $2 WHERE project_id = $1`, [p, reportPrice])
     }
     await this.notifyAction(p, status)
     return { ok: true }

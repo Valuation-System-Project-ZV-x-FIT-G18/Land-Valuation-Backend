@@ -359,8 +359,8 @@ export class ValuationsService implements OnModuleInit {
       : undefined
     const rs = draft?.review_status ?? ''
     const paid = !!draft?.paid
-    // A card payment is approved instantly; a bank-slip payment sits here
-    // ("paid") pending a coordinator's verification before it counts as approved.
+    // A bank-slip payment is submitted first and counts as approved only after
+    // a coordinator verifies it.
     const paidSubmitted = paid || !!draft?.slip_pending
     const l3 = ['pending_l2', 'pending_l1', 'rejected_l2', 'locked'].includes(rs)
     const l2 = ['pending_l1', 'locked'].includes(rs)

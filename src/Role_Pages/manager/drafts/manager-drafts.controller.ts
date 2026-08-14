@@ -21,7 +21,7 @@ export class ManagerDraftsController {
   // POST /api/manager/drafts/action
   @Post('action')
   async action(@Body() dto: DraftActionDto) {
-    return this.service.action(dto.projectId, dto.reportHtml, dto.status, dto.reason ?? '', dto.valuationDate)
+    return this.service.action(dto.projectId, dto.reportHtml, dto.status, dto.reason ?? '', dto.valuationDate, dto.reportPrice)
   }
 
   @Get('fields')

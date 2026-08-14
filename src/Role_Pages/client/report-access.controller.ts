@@ -12,7 +12,7 @@ import { FileInterceptor } from '@nestjs/platform-express'
 import { memoryStorage } from 'multer'
 import type { Response } from 'express'
 import { ReportAccessService } from './report-access.service'
-import { PayDto, PaySlipDto, VerifySlipDto } from './dto/client.dto'
+import { PaySlipDto, VerifySlipDto } from './dto/client.dto'
 
 @Controller('client')
 export class ReportAccessController {
@@ -22,12 +22,6 @@ export class ReportAccessController {
   @Get('applicant/projects')
   async applicantProjects(@Query('nic') nic: string) {
     return { projects: await this.service.applicantProjects(nic ?? '') }
-  }
-
-  // POST /api/client/applicant/pay { projectId }
-  @Post('applicant/pay')
-  async pay(@Body() dto: PayDto) {
-    return this.service.pay(dto.projectId)
   }
 
   // POST /api/client/applicant/pay-slip (multipart)
