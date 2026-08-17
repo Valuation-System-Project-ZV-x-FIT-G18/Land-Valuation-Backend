@@ -39,8 +39,22 @@ export class UsersService implements OnModuleInit {
         `ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime VARCHAR(100) NOT NULL DEFAULT ''`,
       )
       await this.db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE users ALTER COLUMN email TYPE VARCHAR(254)`)
+      await this.db.query(`ALTER TABLE users ALTER COLUMN email DROP DEFAULT`)
+      await this.db.query(`
+        DO $$
+        BEGIN
+          ALTER TABLE users
+            ADD CONSTRAINT users_email_required CHECK (btrim(email) <> '') NOT VALID;
+        EXCEPTION
+          WHEN duplicate_object THEN NULL;
+        END $$;
+      `)
+      await this.db.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email)) WHERE email <> ''`,
+      )
     } catch (err) {
-      this.logger.error(`Could not ensure profile columns: ${(err as Error).message}`)
+      this.logger.error(`Could not ensure user schema: ${(err as Error).message}`)
     }
   }
 

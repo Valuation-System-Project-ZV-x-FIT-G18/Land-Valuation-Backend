@@ -81,36 +81,37 @@ export class BanksService implements OnModuleInit {
           dto.projectRef.trim(),
         ],
       )
-      // Create a login for the bank (external login: role 'Bank', id = branch code)
-      // and email the credentials so the bank can sign in to view its reports.
+      // Create a login only when the bank supplied its email sign-in credential.
+      // The branch code remains the account's internal user_id.
       const branchCode = dto.branchCode.trim()
       const email = (dto.email ?? '').trim()
-      try {
+      if (email) {
+        try {
         // No two accounts may share a NIC or email — if the officer's NIC/email
         // is already used by another account, skip creating this login (the
         // bank record above is still saved either way).
-        const dup = await findDuplicateUserField(this.db, { nic: dto.officerNic, email })
-        if (dup) {
-          this.logger.warn(`Bank login not created: ${dup} already registered to another account.`)
-        } else {
-          const password = `Bank@${Math.floor(1000 + Math.random() * 9000)}`
-          const hash = await bcrypt.hash(password, 10)
-          const ins = await this.db.query(
+          const dup = await findDuplicateUserField(this.db, { nic: dto.officerNic, email })
+          if (dup) {
+            this.logger.warn(`Bank login not created: ${dup} already registered to another account.`)
+          } else {
+            const password = `Bank@${Math.floor(1000 + Math.random() * 9000)}`
+            const hash = await bcrypt.hash(password, 10)
+            const ins = await this.db.query(
             `INSERT INTO users (user_id, first_name, last_name, nic, role, email, password_hash, must_change_password)
              VALUES ($1, $2, '', $3, 'Bank', $4, $5, true)
              ON CONFLICT (user_id) DO NOTHING
              RETURNING user_id`,
-            [branchCode, dto.bankName.trim(), dto.officerNic.trim(), email, hash],
-          )
-          // Only email when a NEW login was created and we have an address.
-          if (ins.rows.length && email) {
-            void this.mail.sendBankWelcome(email, password, dto.bankName.trim())
+              [branchCode, dto.bankName.trim(), dto.officerNic.trim(), email, hash],
+            )
+            if (ins.rows.length) {
+              void this.mail.sendBankWelcome(email, password, dto.bankName.trim())
+            }
           }
+        } catch (e) {
+          this.logger.warn(`Bank login not created: ${(e as Error).message}`)
         }
-      } catch (e) {
-        this.logger.warn(`Bank login not created: ${(e as Error).message}`)
       }
-      // In-system notification to the bank (its login id is the branch code).
+      // In-system notifications still use the branch code as the internal ID.
       await this.notifications.create(
         branchCode,
         `${dto.bankName.trim()} (branch ${branchCode}) has been registered on CODEHUB Land Valuation.`,
