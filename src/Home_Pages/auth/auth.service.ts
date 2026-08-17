@@ -53,8 +53,8 @@ export class AuthService {
   }
 
   // Change a user's password after verifying the current one.
-  async changePassword(dto: ChangePasswordDto) {
-    const user = await this.users.findById(dto.userId)
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    const user = await this.users.findById(userId)
     if (!user || !bcrypt.compareSync(dto.currentPassword, user.password_hash)) {
       throw new UnauthorizedException('Current password is incorrect.')
     }

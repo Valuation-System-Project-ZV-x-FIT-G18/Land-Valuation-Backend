@@ -1,12 +1,7 @@
-import { IsEmail, IsISO8601, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator'
+import { IsEmail, IsISO8601, IsOptional, IsString, Matches, MaxLength, ValidateIf } from 'class-validator'
 import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, PHONE_MESSAGE, PHONE_PATTERN, POSTAL_CODE_MESSAGE, POSTAL_CODE_PATTERN } from '../../../Common_Pages/validation/patterns'
 
 export class UpdateProfileDto {
-  @IsString()
-  @MinLength(1, { message: 'User ID is required.' })
-  @MaxLength(50)
-  userId: string
-
   @IsOptional() @IsString() @MaxLength(60)
   @Matches(NAME_PATTERN, { message: NAME_MESSAGE }) firstName?: string
 

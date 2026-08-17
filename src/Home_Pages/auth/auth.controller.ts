@@ -18,7 +18,6 @@ import { LoginDto } from './dto/login.dto'
 import { ChangePasswordDto } from './dto/change-password.dto'
 import { UpdateProfileDto } from './dto/update-profile.dto'
 import { ForgotPasswordDto } from './dto/forgot-password.dto'
-import { UploadAvatarDto } from './dto/upload-avatar.dto'
 import { Public } from './decorators/public.decorator'
 import { CurrentUser } from './decorators/current-user.decorator'
 import type { AuthUser } from './types/auth-user'
@@ -47,11 +46,11 @@ export class AuthController {
   // POST /api/auth/change-password
   @Post('change-password')
   async changePassword(@CurrentUser() currentUser: AuthUser, @Body() dto: ChangePasswordDto) {
-    const user = await this.authService.changePassword({ ...dto, userId: currentUser.userId })
+    const user = await this.authService.changePassword(currentUser.userId, dto)
     return { ok: true, user }
   }
 
-  // GET /api/auth/profile?userId=... — the Settings page profile.
+  // GET /api/auth/profile — the authenticated user's Settings profile.
   @Get('profile')
   async getProfile(@CurrentUser() user: AuthUser) {
     const profile = await this.users.getProfile(user.userId)
@@ -72,7 +71,7 @@ export class AuthController {
   @UseInterceptors(
     FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }),
   )
-  async uploadAvatar(@CurrentUser() user: AuthUser, @Body() dto: UploadAvatarDto, @UploadedFile() file?: Express.Multer.File) {
+  async uploadAvatar(@CurrentUser() user: AuthUser, @UploadedFile() file?: Express.Multer.File) {
     if (!file) return { ok: false, error: 'No image was received.' }
     if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype)) {
       return { ok: false, error: 'Please upload a JPG, PNG, WEBP, or GIF image.' }
