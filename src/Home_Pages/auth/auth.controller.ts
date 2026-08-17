@@ -19,6 +19,9 @@ import { ChangePasswordDto } from './dto/change-password.dto'
 import { UpdateProfileDto } from './dto/update-profile.dto'
 import { ForgotPasswordDto } from './dto/forgot-password.dto'
 import { UploadAvatarDto } from './dto/upload-avatar.dto'
+import { Public } from './decorators/public.decorator'
+import { CurrentUser } from './decorators/current-user.decorator'
+import type { AuthUser } from './types/auth-user'
 
 @Controller('auth')
 export class AuthController {
@@ -29,35 +32,36 @@ export class AuthController {
 
   // POST /api/auth/login
   @Post('login')
+  @Public()
   async login(@Body() dto: LoginDto) {
-    const user = await this.authService.login(dto)
-    return { ok: true, user }
+    return { ok: true, ...(await this.authService.login(dto)) }
   }
 
   // POST /api/auth/forgot-password  { identifier }  (login ID / email / NIC)
   @Post('forgot-password')
+  @Public()
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.authService.forgotPassword(dto.identifier)
   }
 
   // POST /api/auth/change-password
   @Post('change-password')
-  async changePassword(@Body() dto: ChangePasswordDto) {
-    const user = await this.authService.changePassword(dto)
+  async changePassword(@CurrentUser() currentUser: AuthUser, @Body() dto: ChangePasswordDto) {
+    const user = await this.authService.changePassword({ ...dto, userId: currentUser.userId })
     return { ok: true, user }
   }
 
   // GET /api/auth/profile?userId=... — the Settings page profile.
   @Get('profile')
-  async getProfile(@Query('userId') userId: string) {
-    const profile = await this.users.getProfile(userId ?? '')
+  async getProfile(@CurrentUser() user: AuthUser) {
+    const profile = await this.users.getProfile(user.userId)
     return { profile: profile ?? undefined }
   }
 
   // PUT /api/auth/profile — save the Settings page changes.
   @Put('profile')
-  async updateProfile(@Body() dto: UpdateProfileDto) {
-    const profile = await this.users.updateProfile(dto.userId, dto)
+  async updateProfile(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto) {
+    const profile = await this.users.updateProfile(user.userId, dto)
     return { ok: true, profile }
   }
 
@@ -68,7 +72,7 @@ export class AuthController {
   @UseInterceptors(
     FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }),
   )
-  async uploadAvatar(@Body() dto: UploadAvatarDto, @UploadedFile() file?: Express.Multer.File) {
+  async uploadAvatar(@CurrentUser() user: AuthUser, @Body() dto: UploadAvatarDto, @UploadedFile() file?: Express.Multer.File) {
     if (!file) return { ok: false, error: 'No image was received.' }
     if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype)) {
       return { ok: false, error: 'Please upload a JPG, PNG, WEBP, or GIF image.' }
@@ -76,12 +80,13 @@ export class AuthController {
     // Just a cache-busting token for the frontend's <img src> — has no
     // meaning on disk, since there is no file anymore.
     const token = `db-${Date.now()}-${Math.round(Math.random() * 1e9)}`
-    await this.users.setPhoto(dto.userId, file, token)
+    await this.users.setPhoto(user.userId, file, token)
     return { ok: true, photoPath: token }
   }
 
   // GET /api/auth/avatar?userId=... — serve the stored profile picture from the database.
   @Get('avatar')
+  @Public()
   async avatar(@Query('userId') userId: string, @Res() res: Response) {
     const photo = await this.users.getPhoto(userId ?? '')
     if (!photo) { res.status(404).json({ error: 'No profile picture set.' }); return }

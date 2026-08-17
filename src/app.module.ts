@@ -3,7 +3,6 @@ import { ConfigModule } from '@nestjs/config'
 import { DatabaseModule } from './Common_Pages/database/database.module'
 import { MailModule } from './Common_Pages/mail/mail.module'
 import { ContactModule } from './Home_Pages/contact/contact.module'
-import { ValuationModule } from './Home_Pages/valuation/valuation.module'
 import { AuthModule } from './Home_Pages/auth/auth.module'
 import { ApplicantsModule } from './Role_Pages/coordinator/applicants/applicants.module'
 import { ProjectsModule } from './Role_Pages/coordinator/projects/projects.module'
@@ -37,7 +36,6 @@ import { ValuerProfileModule } from './Role_Pages/manager/valuer-profile/valuer-
     ObjectStorageModule, // private Supabase object storage
     MailModule, // email sending
     ContactModule, // /api/contact
-    ValuationModule, // /api/valuation
     AuthModule, // /api/auth/login
     ApplicantsModule, // /api/coordinator/applicants/search
     ProjectsModule, // /api/coordinator/projects

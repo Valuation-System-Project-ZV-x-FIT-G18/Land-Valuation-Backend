@@ -1,10 +1,9 @@
-import { IsString, MaxLength, MinLength } from 'class-validator'
+import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator'
 
 export class LoginDto {
-  @IsString()
-  @MinLength(1, { message: 'User ID is required.' })
-  @MaxLength(50)
-  userId: string
+  @IsEmail({}, { message: 'Enter a valid email address.' })
+  @MaxLength(254)
+  email: string
 
   @IsString()
   @MinLength(1, { message: 'Password is required.' })

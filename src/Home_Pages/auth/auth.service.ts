@@ -4,6 +4,7 @@ import { UsersService } from './users.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
 import { LoginDto } from './dto/login.dto'
 import { ChangePasswordDto } from './dto/change-password.dto'
+import { JwtService } from '@nestjs/jwt'
 
 // Login + password-change logic. Works for staff and loan applicants (both live
 // in the `users` table; a loan applicant's user_id is their NIC).
@@ -12,21 +13,28 @@ export class AuthService {
   constructor(
     private readonly users: UsersService,
     private readonly mail: MailService,
+    private readonly jwt: JwtService,
   ) {}
 
   async login(dto: LoginDto) {
-    const user = await this.users.findById(dto.userId)
+    const user = await this.users.findByEmail(dto.email)
     if (!user || !bcrypt.compareSync(dto.password, user.password_hash)) {
-      throw new UnauthorizedException('Invalid ID or password.')
+      throw new UnauthorizedException('Invalid email or password.')
     }
     // Return safe fields only (never the password hash).
-    return {
+    const safeUser = {
       userId: user.user_id,
       name: `${user.first_name} ${user.last_name}`,
       role: user.role,
       mustChangePassword: user.must_change_password,
       photoPath: (user as { photo_path?: string }).photo_path ?? '',
     }
+    const accessToken = await this.jwt.signAsync({
+      userId: user.user_id,
+      email: user.email,
+      role: user.role,
+    })
+    return { user: safeUser, accessToken }
   }
 
   // Forgot password: generate a new temporary password, email it (with the

@@ -1,8 +1,8 @@
+//06
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
-import { REPORT_TEMPLATE, NUM_TO_KEY, IMAGE_MARKERS } from './report-template'
 
 type Row = Record<string, any>
 
@@ -44,21 +44,6 @@ export class DraftService implements OnModuleInit {
     const col = p[column]
     if (col !== null && col !== undefined && String(col) !== '') return String(col)
     return String(p.details?.[key] ?? '')
-  }
-
-  // Fill the report template: replace every #N token with its mapped value.
-  async fill(projectId: string): Promise<{ text: string } | { error: string }> {
-    const vals = await this.buildValues(projectId)
-    if (!vals) return { error: 'Project not found.' }
-    const text = REPORT_TEMPLATE.replace(/#\s*(\d+)/g, (_m, num) => {
-      const n = Number(num)
-      if (IMAGE_MARKERS[n]) return IMAGE_MARKERS[n]
-      const key = NUM_TO_KEY[n]
-      if (!key) return `#${n}`
-      const v = vals[key]
-      return v && String(v).trim() ? String(v) : '________'
-    })
-    return { text }
   }
 
   async buildValues(projectId: string) {

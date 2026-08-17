@@ -1,3 +1,4 @@
+//04
 import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common'
 import type { Response } from 'express'
 import { DraftService } from './draft.service'
@@ -7,12 +8,6 @@ import { SaveDraftDto } from './dto/save-draft.dto'
 @Controller('technical-officer/draft')
 export class DraftController {
   constructor(private readonly draft: DraftService, private readonly docx: DocxReportService) {}
-
-  // GET /fill?projectId=...
-  @Get('fill')
-  async fill(@Query('projectId') projectId: string) {
-    return this.draft.fill(projectId ?? '')
-  }
 
   // GET /build?projectId=...
   @Get('build')

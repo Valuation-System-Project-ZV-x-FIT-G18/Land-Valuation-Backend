@@ -12,6 +12,7 @@ export type User = {
   password_hash: string
   must_change_password: boolean
   photo_path: string
+  email: string
 }
 
 // Reads/writes the "users" table (staff + loan applicants).
@@ -132,14 +133,26 @@ export class UsersService implements OnModuleInit {
 
   // The stored profile-picture bytes + content type, for serving it back.
   async getPhoto(userId: string): Promise<{ data: Buffer; mime: string } | null> {
-    const r = await this.db.query(`SELECT photo_mime, photo_object_key FROM users WHERE user_id = $1`, [
+    const r = await this.db.query(`SELECT photo_data, photo_mime, photo_object_key FROM users WHERE user_id = $1`, [
       userId,
     ])
     const row = r.rows[0]
-    if (!row?.photo_object_key) return null
-    const objectData = await this.storage.read(row.photo_object_key as string)
-    if (!objectData) return null
-    return { data: objectData, mime: (row.photo_mime as string) || 'image/jpeg' }
+    if (!row) return null
+    const objectData = row.photo_object_key
+      ? await this.storage.read(row.photo_object_key as string)
+      : null
+    const databaseData = row.photo_data as Buffer | null
+    const data = objectData ?? databaseData
+    if (!data) return null
+    return { data, mime: (row.photo_mime as string) || 'image/jpeg' }
+  }
+
+  async findByEmail(email: string): Promise<User | null> {
+    const result = await this.db.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+      [email.trim()],
+    )
+    return (result.rows[0] as User) ?? null
   }
 
   // Update the user's personal fields. Identity fields (user_id, role, nic) and

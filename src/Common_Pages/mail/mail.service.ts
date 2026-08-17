@@ -1,3 +1,4 @@
+//02
 import { Injectable, Logger } from '@nestjs/common'
 import * as nodemailer from 'nodemailer'
 
@@ -439,8 +440,8 @@ export class MailService {
     }
   }
 
-  // Auto-acknowledge a public contact message or valuation request. Never throws.
-  async sendAcknowledgement(to: string, name: string, kind: 'message' | 'valuation request') {
+  // Auto-acknowledge a public contact message. Never throws.
+  async sendAcknowledgement(to: string, name: string, kind: 'message') {
     try {
       const transporter = await this.getTransporter()
       const from = process.env.SMTP_FROM ?? 'CODEHUB Land Valuation <landvaluation.codehub@gmail.com>'

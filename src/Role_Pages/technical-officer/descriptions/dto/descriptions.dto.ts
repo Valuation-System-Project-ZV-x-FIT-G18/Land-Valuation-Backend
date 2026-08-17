@@ -1,3 +1,4 @@
+//01
 import { IsObject, IsOptional, IsString, MaxLength, MinLength } from 'class-validator'
 
 export class GenerateOneDto {

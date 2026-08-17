@@ -15,21 +15,6 @@ CREATE TABLE IF NOT EXISTS contact_messages (
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- Submissions from the "Request a Land Valuation" form.
-CREATE TABLE IF NOT EXISTS valuation_requests (
-  id          SERIAL PRIMARY KEY,
-  name        VARCHAR(120) NOT NULL,
-  phone       VARCHAR(20)  NOT NULL,
-  email       VARCHAR(160) NOT NULL,
-  nic         VARCHAR(20)  NOT NULL DEFAULT '',
-  message     TEXT         NOT NULL,
-  created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
-);
-
--- Migration: add the NIC column to existing valuation_requests tables.
-ALTER TABLE valuation_requests
-  ADD COLUMN IF NOT EXISTS nic VARCHAR(20) NOT NULL DEFAULT '';
-
 -- Internal staff users. In future these are added by an admin (not built yet),
 -- so for now the table is seeded with a few sample rows below.
 -- The user_id is the login ID (e.g. Cor001, TO001, ML1001) and the primary key.
