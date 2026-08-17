@@ -37,17 +37,17 @@ export class AuthService {
     return { user: safeUser, accessToken }
   }
 
-  // Forgot password: generate a new temporary password, email it (with the
-  // login ID) to the registered address, and force a change on next login.
+  // Generate a temporary password for the account matching this email and
+  // force a password change on the next login.
   // Always returns { ok: true } so we never reveal whether an account exists.
-  async forgotPassword(identifier: string) {
-    const user = await this.users.findByIdentifier(identifier)
+  async forgotPassword(emailAddress: string) {
+    const user = await this.users.findByEmail(emailAddress)
     const email = (user?.email ?? '').trim()
     if (user && email) {
       const newPassword = `Codehub@${Math.floor(1000 + Math.random() * 9000)}`
       const hash = await bcrypt.hash(newPassword, 10)
       await this.users.resetPassword(user.user_id, hash)
-      await this.mail.sendPasswordReset(email, user.user_id, newPassword)
+      await this.mail.sendPasswordReset(email, newPassword)
     }
     return { ok: true }
   }

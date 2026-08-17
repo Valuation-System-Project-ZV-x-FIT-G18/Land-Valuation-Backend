@@ -104,7 +104,7 @@ export class BanksService implements OnModuleInit {
           )
           // Only email when a NEW login was created and we have an address.
           if (ins.rows.length && email) {
-            void this.mail.sendBankWelcome(email, branchCode, password, dto.bankName.trim())
+            void this.mail.sendBankWelcome(email, password, dto.bankName.trim())
           }
         }
       } catch (e) {

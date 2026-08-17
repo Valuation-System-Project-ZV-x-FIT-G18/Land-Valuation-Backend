@@ -113,7 +113,7 @@ export class ApplicantsService implements OnModuleInit {
     // Email + notification are best-effort — a mail/SMTP hiccup must NOT fail the
     // registration (the applicant is already saved above).
     try {
-      await this.mail.sendApplicantWelcome(data.email, data.nic, data.password)
+      await this.mail.sendApplicantWelcome(data.email, data.password)
       await this.notifications.create(
         data.nic.trim(),
         'You have been registered as a Loan Applicant on CODEHUB Land Valuation. Please change your password on first login.',

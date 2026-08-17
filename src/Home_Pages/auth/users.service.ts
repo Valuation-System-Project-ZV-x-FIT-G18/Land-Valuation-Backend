@@ -49,17 +49,6 @@ export class UsersService implements OnModuleInit {
     return (result.rows[0] as User) ?? null
   }
 
-  // Find a user by their login ID, email, or NIC (for forgot-password).
-  async findByIdentifier(identifier: string): Promise<(User & { email?: string }) | null> {
-    const v = (identifier ?? '').trim()
-    if (!v) return null
-    const r = await this.db.query(
-      `SELECT * FROM users WHERE user_id = $1 OR email = $1 OR nic = $1 LIMIT 1`,
-      [v],
-    )
-    return (r.rows[0] as User & { email?: string }) ?? null
-  }
-
   // Set a new password hash and clear the first-login flag.
   async setPassword(userId: string, passwordHash: string) {
     await this.db.query(

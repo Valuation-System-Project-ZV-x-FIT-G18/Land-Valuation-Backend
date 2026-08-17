@@ -36,11 +36,11 @@ export class AuthController {
     return { ok: true, ...(await this.authService.login(dto)) }
   }
 
-  // POST /api/auth/forgot-password  { identifier }  (login ID / email / NIC)
+  // POST /api/auth/forgot-password { email }
   @Post('forgot-password')
   @Public()
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.forgotPassword(dto.identifier)
+    return this.authService.forgotPassword(dto.email)
   }
 
   // POST /api/auth/change-password

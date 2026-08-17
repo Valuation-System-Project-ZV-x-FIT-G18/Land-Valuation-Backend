@@ -83,8 +83,8 @@ export class AdminService implements OnModuleInit {
       }
     }
 
-    // A Bank logs in with its Branch Code, so that becomes its login ID; other
-    // roles get an auto-generated prefixed ID (Cor001, TO001, ...).
+    // A bank keeps its Branch Code as the internal account ID; other roles get
+    // an auto-generated prefixed ID (Cor001, TO001, ...). Login uses email.
     let userId: string
     if (dto.role === 'Bank') {
       const code = (dto.branchCode ?? '').trim()
@@ -141,7 +141,7 @@ export class AdminService implements OnModuleInit {
     }
 
     // Email the new staff member their login id + password.
-    await this.mail.sendStaffWelcome(dto.email.trim(), userId, dto.password, dto.role)
+    await this.mail.sendStaffWelcome(dto.email.trim(), dto.password, dto.role)
 
     return { userId }
   }
@@ -167,7 +167,7 @@ export class AdminService implements OnModuleInit {
     }))
   }
 
-  // Edit a user's details. Login ID, NIC and email stay fixed.
+  // Edit a user's details. Account ID, NIC and email stay fixed.
   async updateUser(userId: string, dto: UpdateUserDto) {
     if (SINGLETON_ROLES.includes(dto.role)) {
       const existing = await this.db.query(
