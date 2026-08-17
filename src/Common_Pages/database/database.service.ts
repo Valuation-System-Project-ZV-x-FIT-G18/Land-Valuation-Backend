@@ -1,3 +1,5 @@
+/*This service manages the NestJS application’s PostgreSQL connection pool. It connects using `DATABASE_URL`, enables SSL for cloud databases, executes SQL queries, handles idle connection errors, and closes connections when the app shuts down.*/
+
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common'
 import { Pool, QueryResult } from 'pg'
 

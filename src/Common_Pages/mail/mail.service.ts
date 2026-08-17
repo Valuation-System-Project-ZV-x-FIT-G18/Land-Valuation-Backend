@@ -58,7 +58,7 @@ export class MailService {
           `You can log in using your email address and the password below:\n` +
           `  Email address: ${to}\n` +
           `  Password: ${password}\n\n` +
-          `Go to the External Login page, choose "Loan Applicant", and sign in with these details.\n\n` +
+          `Go to the External Login page and sign in with these details. Your account type is detected automatically.\n\n` +
           `For your security, please change your password after your first login.\n\n` +
           `Regards,\nCODEHUB Land Valuation Team`,
         html:
@@ -68,7 +68,7 @@ export class MailService {
           `<table cellpadding="6" style="border-collapse:collapse">` +
           `<tr><td><b>Email address</b></td><td>${to}</td></tr>` +
           `<tr><td><b>Password</b></td><td>${password}</td></tr></table>` +
-          `<p>Go to the <b>External Login</b> page, choose <b>Loan Applicant</b>, and sign in with these details.</p>` +
+          `<p>Go to the <b>External Login</b> page and sign in with these details. Your account type is detected automatically.</p>` +
           `<p style="color:#b45309"><b>For your security, please change your password after your first login.</b></p>` +
           `<p>Regards,<br/>CODEHUB Land Valuation Team</p>`,
       })
@@ -413,7 +413,7 @@ export class MailService {
         text:
           `Hello,\n\n` +
           `${bankName} has been registered on the CODEHUB Land Valuation system.\n\n` +
-          `Log in on the External Login page (choose "Bank") with:\n` +
+          `Log in on the External Login page with:\n` +
           `  Email address: ${to}\n` +
           `  Password: ${password}\n\n` +
           `You can view the finalised valuation reports for your projects once they are released.\n` +
@@ -422,7 +422,7 @@ export class MailService {
         html:
           `<p>Hello,</p>` +
           `<p><b>${bankName}</b> has been registered on the <b>CODEHUB Land Valuation</b> system.</p>` +
-          `<p>Log in on the <b>External Login</b> page (choose <b>Bank</b>) with:</p>` +
+          `<p>Log in on the <b>External Login</b> page with:</p>` +
           `<table cellpadding="6" style="border-collapse:collapse">` +
           `<tr><td><b>Email address</b></td><td>${to}</td></tr>` +
           `<tr><td><b>Password</b></td><td>${password}</td></tr></table>` +
