@@ -144,13 +144,41 @@ export class InspectionsService implements OnModuleInit {
       const cur = found[i]
       if (!cur.key) continue // section heading, just a boundary
       const nextStart = found[i + 1]?.start ?? flat.length
-      const value = flat
+      let value = flat
         .slice(cur.end, nextStart)
         .replace(/^[\s:._–-]+/, '') // leading colon / underscores / dashes
         .replace(/^\([^)]*\)\s*:?\s*/, '') // leftover label hint e.g. "(Land Only):"
         .replace(/_+/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
+
+      // Select fields are printed with an OCR-friendly reference such as
+      // "Write one: Yes / Partially / No" followed by a ruled answer line.
+      // Remove that printed reference, then convert handwriting case variants
+      // (yes, YES) to the exact dropdown value (Yes).
+      const definition = inspectionFields.find((field) => field.key === cur.key)
+      if (definition?.options?.length) {
+        const optionPattern = definition.options
+          .map((option) => option.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
+          .join('\\s*[/|]\\s*')
+        value = value.replace(new RegExp(`^write\\s+one\\s*:?\\s*${optionPattern}\\s*`, 'i'), '').trim()
+        const normalized = definition.options.find((option) => option.toLowerCase() === value.toLowerCase())
+        if (normalized) value = normalized
+      }
+      if (definition?.type === 'date') {
+        // Officers use Sri Lankan day-first dates on paper. HTML date inputs
+        // require ISO format, so 11/08/2026 (or 11-08-26) becomes 2026-08-11.
+        const match = value.match(/\b(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{2,4})\b/)
+        if (match) {
+          const day = Number(match[1])
+          const month = Number(match[2])
+          const year = Number(match[3]) + (match[3].length === 2 ? 2000 : 0)
+          const date = new Date(Date.UTC(year, month - 1, day))
+          if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) {
+            value = `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
+          }
+        }
+      }
       if (value && !/^[_.\s:-]*$/.test(value)) out[cur.key] = value
     }
     return out

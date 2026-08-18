@@ -1,0 +1,172 @@
+{
+  "input": "C:\\Users\\admin\\Desktop\\project\\Land-Valuation-Backend\\src\\Role_Pages\\technical-officer\\draft\\templates\\valuation-report-land-only.docx",
+  "fonts_by_char_count": {
+    "Calibri": 297,
+    "Times New Roman": 128,
+    "Roboto Mono": 20
+  },
+  "direct_run_formatting_runs": 681,
+  "direct_paragraph_formatting_paragraphs": 63,
+  "heading_like_paragraphs_not_heading_style": [
+    {
+      "para_index": 5,
+      "text": "VALUATION \nREPORT",
+      "style": "Normal"
+    },
+    {
+      "para_index": 36,
+      "text": "The Manager,",
+      "style": "Normal"
+    },
+    {
+      "para_index": 37,
+      "text": "{bankName},",
+      "style": "Normal"
+    },
+    {
+      "para_index": 38,
+      "text": "{bankBranchName},",
+      "style": "Normal"
+    },
+    {
+      "para_index": 41,
+      "text": "Dear Sir,",
+      "style": "Normal"
+    },
+    {
+      "para_index": 43,
+      "text": "VALUATION REPORT OF PROPERTY DEPICTED AS LOT NO. {lotNumber}",
+      "style": "Normal"
+    },
+    {
+      "para_index": 44,
+      "text": "IN SURVEY PLAN NO. {surveyPlanNumber}",
+      "style": "Normal"
+    },
+    {
+      "para_index": 45,
+      "text": "DATED {surveyPlanDate}",
+      "style": "Normal"
+    },
+    {
+      "para_index": 46,
+      "text": "MADE BY {surveyorName} LICENSED SURVEYOR",
+      "style": "Normal"
+    },
+    {
+      "para_index": 57,
+      "text": "Land Only",
+      "style": "Normal"
+    },
+    {
+      "para_index": 59,
+      "text": "Market Value as at  {valuationDate}     :-  Rs. {marketValue}/-",
+      "style": "Normal"
+    },
+    {
+      "para_index": 61,
+      "text": "Market Value as at  {valuationDate}     :-  Rs. {forcedSaleValue}/-",
+      "style": "Normal"
+    },
+    {
+      "para_index": 111,
+      "text": "DATED {surveyPlanDate}",
+      "style": "Normal"
+    },
+    {
+      "para_index": 112,
+      "text": "MADE BY {surveyorName}, LICENSED SURVEYOR",
+      "style": "Normal"
+    },
+    {
+      "para_index": 114,
+      "text": "1. PURPOSE OF THE VALUATION",
+      "style": "Normal"
+    },
+    {
+      "para_index": 117,
+      "text": "2. PREMISE OF VALUE",
+      "style": "Normal"
+    },
+    {
+      "para_index": 120,
+      "text": "3. BASIS OF THE VALUATION",
+      "style": "Normal"
+    },
+    {
+      "para_index": 123,
+      "text": "4. CLIENT INFORMATION",
+      "style": "Normal"
+    },
+    {
+      "para_index": 127,
+      "text": "5. PROPERTY DETAILS",
+      "style": "Normal"
+    },
+    {
+      "para_index": 129,
+      "text": "5.1 SITUATION",
+      "style": "Normal"
+    }
+  ],
+  "examples": {
+    "direct_run_formatting": [
+      {
+        "para_index": 2,
+        "run_text": "REF \u2013 ",
+        "style": "Normal"
+      },
+      {
+        "para_index": 2,
+        "run_text": "{ ",
+        "style": "Normal"
+      },
+      {
+        "para_index": 2,
+        "run_text": "reportReference",
+        "style": "Normal"
+      },
+      {
+        "para_index": 2,
+        "run_text": " }",
+        "style": "Normal"
+      },
+      {
+        "para_index": 5,
+        "run_text": "VALUATION ",
+        "style": "Normal"
+      }
+    ],
+    "direct_paragraph_formatting": [
+      {
+        "para_index": 77,
+        "text": "LIMITATIONS",
+        "style": "Normal"
+      },
+      {
+        "para_index": 79,
+        "text": "",
+        "style": "Normal"
+      },
+      {
+        "para_index": 80,
+        "text": "             ",
+        "style": "Normal"
+      },
+      {
+        "para_index": 81,
+        "text": "GENERAL ASSUMPTIONS",
+        "style": "Normal"
+      },
+      {
+        "para_index": 82,
+        "text": "",
+        "style": "Normal"
+      }
+    ]
+  },
+  "notes": [
+    "Direct formatting is not always wrong, but it often causes inconsistent output when templates change.",
+    "Heading-like paragraphs not using Heading styles can break TOC and accessibility."
+  ]
+}

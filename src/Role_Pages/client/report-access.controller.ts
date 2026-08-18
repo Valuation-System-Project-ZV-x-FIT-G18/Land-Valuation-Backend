@@ -12,7 +12,9 @@ import { FileInterceptor } from '@nestjs/platform-express'
 import { memoryStorage } from 'multer'
 import type { Response } from 'express'
 import { ReportAccessService } from './report-access.service'
-import { PayDto, PaySlipDto, VerifySlipDto } from './dto/client.dto'
+import { PaySlipDto, VerifySlipDto } from './dto/client.dto'
+import { CurrentUser } from '../../Home_Pages/auth/decorators/current-user.decorator'
+import type { AuthUser } from '../../Home_Pages/auth/types/auth-user'
 
 @Controller('client')
 export class ReportAccessController {
@@ -22,12 +24,6 @@ export class ReportAccessController {
   @Get('applicant/projects')
   async applicantProjects(@Query('nic') nic: string) {
     return { projects: await this.service.applicantProjects(nic ?? '') }
-  }
-
-  // POST /api/client/applicant/pay { projectId }
-  @Post('applicant/pay')
-  async pay(@Body() dto: PayDto) {
-    return this.service.pay(dto.projectId)
   }
 
   // POST /api/client/applicant/pay-slip (multipart)
@@ -67,6 +63,18 @@ export class ReportAccessController {
   @Get('bank/projects')
   async bankProjects(@Query('bankId') bankId: string) {
     return { projects: await this.service.bankProjects(bankId ?? '') }
+  }
+
+  // The requesting bank may read only its own paid, finalized report.
+  @Get('bank/report')
+  async bankReport(@CurrentUser() user: AuthUser, @Query('projectId') projectId: string) {
+    return this.service.bankReport(user, projectId ?? '')
+  }
+
+  // Authenticated operational overview for Bank and Loan Applicant dashboards.
+  @Get('dashboard/projects')
+  async dashboardProjects(@CurrentUser() user: AuthUser) {
+    return { projects: await this.service.dashboardProjects(user) }
   }
 
   // GET /api/client/can-view?projectId=...

@@ -14,6 +14,8 @@ import type { Response } from 'express'
 import { ValuationsService } from './valuations.service'
 import { CreateValuationRequestDto } from './dto/create-valuation-request.dto'
 import { AssignOfficerDto } from './dto/assign-officer.dto'
+import { CurrentUser } from '../../../Home_Pages/auth/decorators/current-user.decorator'
+import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 @Controller('coordinator/valuations')
 export class ValuationsController {
@@ -37,7 +39,8 @@ export class ValuationsController {
 
   // GET /api/coordinator/valuations/by-project?projectId=pro001
   @Get('by-project')
-  async byProject(@Query('projectId') projectId: string) {
+  async byProject(@CurrentUser() user: AuthUser, @Query('projectId') projectId: string) {
+    await this.valuations.assertProjectAccess(user, projectId ?? '')
     const valuations = await this.valuations.listByProject(projectId ?? '')
     return { valuations }
   }
@@ -69,21 +72,24 @@ export class ValuationsController {
 
   // GET /api/coordinator/valuations/status?id=<surrogate row id>
   @Get('status')
-  async status(@Query('id') id: string) {
+  async status(@CurrentUser() user: AuthUser, @Query('id') id: string) {
+    await this.valuations.assertRowAccess(user, id ?? '')
     const status = await this.valuations.getStatus(id ?? '')
     return { found: !!status, status: status ?? undefined }
   }
 
   // GET /api/coordinator/valuations/timeline?id=<surrogate row id>
   @Get('timeline')
-  async timeline(@Query('id') id: string) {
+  async timeline(@CurrentUser() user: AuthUser, @Query('id') id: string) {
+    await this.valuations.assertRowAccess(user, id ?? '')
     const res = await this.valuations.timeline(id ?? '')
     return res ?? { error: 'Valuation not found.' }
   }
 
   // GET /api/coordinator/valuations/project-timeline?projectId=...
   @Get('project-timeline')
-  async projectTimeline(@Query('projectId') projectId: string) {
+  async projectTimeline(@CurrentUser() user: AuthUser, @Query('projectId') projectId: string) {
+    await this.valuations.assertProjectAccess(user, projectId ?? '')
     const res = await this.valuations.projectTimeline(projectId ?? '')
     return res ?? { error: 'Project not found.' }
   }

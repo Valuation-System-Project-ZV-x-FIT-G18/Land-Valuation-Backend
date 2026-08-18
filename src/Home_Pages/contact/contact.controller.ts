@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post } from '@nestjs/common'
 import { ContactService } from './contact.service'
 import { CreateContactDto } from './dto/create-contact.dto'
+import { Public } from '../auth/decorators/public.decorator'
 
 // Handles HTTP requests for contact messages (the "controller" layer).
 // Route: POST /api/contact
@@ -9,6 +10,7 @@ export class ContactController {
   constructor(private readonly contactService: ContactService) {}
 
   @Post()
+  @Public()
   async create(@Body() dto: CreateContactDto) {
     await this.contactService.create(dto)
     return { ok: true }

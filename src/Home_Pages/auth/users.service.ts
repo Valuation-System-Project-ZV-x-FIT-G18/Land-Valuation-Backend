@@ -12,6 +12,7 @@ export type User = {
   password_hash: string
   must_change_password: boolean
   photo_path: string
+  email: string
 }
 
 // Reads/writes the "users" table (staff + loan applicants).
@@ -38,25 +39,28 @@ export class UsersService implements OnModuleInit {
         `ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime VARCHAR(100) NOT NULL DEFAULT ''`,
       )
       await this.db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE users ALTER COLUMN email TYPE VARCHAR(254)`)
+      await this.db.query(`ALTER TABLE users ALTER COLUMN email DROP DEFAULT`)
+      await this.db.query(`
+        DO $$
+        BEGIN
+          ALTER TABLE users
+            ADD CONSTRAINT users_email_required CHECK (btrim(email) <> '') NOT VALID;
+        EXCEPTION
+          WHEN duplicate_object THEN NULL;
+        END $$;
+      `)
+      await this.db.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email)) WHERE email <> ''`,
+      )
     } catch (err) {
-      this.logger.error(`Could not ensure profile columns: ${(err as Error).message}`)
+      this.logger.error(`Could not ensure user schema: ${(err as Error).message}`)
     }
   }
 
   async findById(userId: string): Promise<User | null> {
     const result = await this.db.query('SELECT * FROM users WHERE user_id = $1', [userId])
     return (result.rows[0] as User) ?? null
-  }
-
-  // Find a user by their login ID, email, or NIC (for forgot-password).
-  async findByIdentifier(identifier: string): Promise<(User & { email?: string }) | null> {
-    const v = (identifier ?? '').trim()
-    if (!v) return null
-    const r = await this.db.query(
-      `SELECT * FROM users WHERE user_id = $1 OR email = $1 OR nic = $1 LIMIT 1`,
-      [v],
-    )
-    return (r.rows[0] as User & { email?: string }) ?? null
   }
 
   // Set a new password hash and clear the first-login flag.
@@ -132,14 +136,26 @@ export class UsersService implements OnModuleInit {
 
   // The stored profile-picture bytes + content type, for serving it back.
   async getPhoto(userId: string): Promise<{ data: Buffer; mime: string } | null> {
-    const r = await this.db.query(`SELECT photo_mime, photo_object_key FROM users WHERE user_id = $1`, [
+    const r = await this.db.query(`SELECT photo_data, photo_mime, photo_object_key FROM users WHERE user_id = $1`, [
       userId,
     ])
     const row = r.rows[0]
-    if (!row?.photo_object_key) return null
-    const objectData = await this.storage.read(row.photo_object_key as string)
-    if (!objectData) return null
-    return { data: objectData, mime: (row.photo_mime as string) || 'image/jpeg' }
+    if (!row) return null
+    const objectData = row.photo_object_key
+      ? await this.storage.read(row.photo_object_key as string)
+      : null
+    const databaseData = row.photo_data as Buffer | null
+    const data = objectData ?? databaseData
+    if (!data) return null
+    return { data, mime: (row.photo_mime as string) || 'image/jpeg' }
+  }
+
+  async findByEmail(email: string): Promise<User | null> {
+    const result = await this.db.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+      [email.trim()],
+    )
+    return (result.rows[0] as User) ?? null
   }
 
   // Update the user's personal fields. Identity fields (user_id, role, nic) and

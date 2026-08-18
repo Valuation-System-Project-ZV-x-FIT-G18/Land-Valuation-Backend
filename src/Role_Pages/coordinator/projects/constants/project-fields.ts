@@ -15,7 +15,7 @@ const toSnake = (s: string) =>
 // Every detail field, in the same order the form shows them.
 export const projectFieldKeys = [
   // Section 5 — Property Address (+ map coordinates)
-  'propertyNumber', 'streetName', 'villageTown', 'gnDivision', 'dsDivision',
+  'propertyNumber', 'streetName', 'villageTown', 'propertyCity', 'gnDivision', 'dsDivision',
   'district', 'province', 'postalCode', 'latitude', 'longitude',
   // Section 6 — Situation / Administrative
   'landTraditionalName', 'localAuthorityType', 'localAuthorityName', 'pattu',
@@ -29,7 +29,7 @@ export const projectFieldKeys = [
   'extentAsPerPlan', 'extentAsPerDeed', 'extentsTally',
   // Section 9 — Deed / Ownership
   'deedType', 'deedNumber', 'deedDate', 'bankRequestDate', 'attorneyName', 'notaryNoLocation',
-  'ownerNameAsPerDeed', 'landRegistrySearchDone', 'previousOwnerName',
+  'ownerNameAsPerDeed', 'ownershipType', 'landRegistrySearchDone', 'previousOwnerName',
   // Section 10 — Boundaries
   'boundaryNorth', 'boundaryEast', 'boundarySouth', 'boundaryWest',
   'rightOfWayAvailable', 'rightOfWayFrom',

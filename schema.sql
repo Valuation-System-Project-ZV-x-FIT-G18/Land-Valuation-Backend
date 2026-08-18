@@ -15,24 +15,8 @@ CREATE TABLE IF NOT EXISTS contact_messages (
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- Submissions from the "Request a Land Valuation" form.
-CREATE TABLE IF NOT EXISTS valuation_requests (
-  id          SERIAL PRIMARY KEY,
-  name        VARCHAR(120) NOT NULL,
-  phone       VARCHAR(20)  NOT NULL,
-  email       VARCHAR(160) NOT NULL,
-  nic         VARCHAR(20)  NOT NULL DEFAULT '',
-  message     TEXT         NOT NULL,
-  created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
-);
-
--- Migration: add the NIC column to existing valuation_requests tables.
-ALTER TABLE valuation_requests
-  ADD COLUMN IF NOT EXISTS nic VARCHAR(20) NOT NULL DEFAULT '';
-
--- Internal staff users. In future these are added by an admin (not built yet),
--- so for now the table is seeded with a few sample rows below.
--- The user_id is the login ID (e.g. Cor001, TO001, ML1001) and the primary key.
+-- All authenticated users. Email is the sign-in credential; user_id remains
+-- the stable internal primary key used by related business tables.
 CREATE TABLE IF NOT EXISTS users (
   user_id       VARCHAR(20)  PRIMARY KEY,
   first_name    VARCHAR(60)  NOT NULL,
@@ -40,7 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
   initials      VARCHAR(40)  NOT NULL DEFAULT '',
   nic           VARCHAR(20)  NOT NULL,
   role          VARCHAR(40)  NOT NULL,
-  email         VARCHAR(160) NOT NULL DEFAULT '',
+  email         VARCHAR(254) NOT NULL,
   phone         VARCHAR(20)  NOT NULL DEFAULT '',
   date_of_birth DATE,
   province      VARCHAR(60)  NOT NULL DEFAULT '',
@@ -53,8 +37,10 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Migration: add the newer columns to existing users tables.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email         VARCHAR(254) NOT NULL DEFAULT '';
+ALTER TABLE users ALTER COLUMN email TYPE VARCHAR(254);
+ALTER TABLE users ALTER COLUMN email DROP DEFAULT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS initials      VARCHAR(40)  NOT NULL DEFAULT '';
-ALTER TABLE users ADD COLUMN IF NOT EXISTS email         VARCHAR(160) NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone         VARCHAR(20)  NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS province      VARCHAR(60)  NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS district      VARCHAR(60)  NOT NULL DEFAULT '';
@@ -72,20 +58,29 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_path VARCHAR(255) NOT NULL DEFA
 ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_data BYTEA;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime VARCHAR(100) NOT NULL DEFAULT '';
 
--- No two accounts (of any role) may share a NIC or email. Blank values are
--- excluded so accounts without one (e.g. a Bank login with no email) don't
--- collide with each other.
+-- Email-only authentication requires a non-empty, case-insensitively unique
+-- address. NOT VALID keeps this migration deployable when a legacy database
+-- still has blank emails, while enforcing the rule for new or updated rows.
+DO $$
+BEGIN
+  ALTER TABLE users
+    ADD CONSTRAINT users_email_required CHECK (btrim(email) <> '') NOT VALID;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+-- NIC remains a unique domain identifier, but it is not a sign-in credential.
 CREATE UNIQUE INDEX IF NOT EXISTS users_nic_unique ON users (nic) WHERE nic <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email)) WHERE email <> '';
 
 -- Sample staff rows (ON CONFLICT keeps this safe to run more than once).
 -- The password_hash below is bcrypt('Test@123') — FOR TESTING ONLY.
-INSERT INTO users (user_id, first_name, last_name, nic, role, password_hash) VALUES
-  ('Cor001', 'Nimal',  'Perera',     '199012345678', 'Coordinator',       '$2b$10$fTwlHtzwitWDGxL8nr9vxOozjzlpL5mhPKmeaFH4YNH2PUzlcuV7O'),
-  ('TO001',  'Kasun',  'Silva',      '199523456789', 'Technical Officer',  '$2b$10$fTwlHtzwitWDGxL8nr9vxOozjzlpL5mhPKmeaFH4YNH2PUzlcuV7O'),
-  ('ML1001', 'Sunil',  'Fernando',   '198534567V',   'Manager L1',         '$2b$10$fTwlHtzwitWDGxL8nr9vxOozjzlpL5mhPKmeaFH4YNH2PUzlcuV7O'),
-  ('ML2001', 'Dilani', 'Jayasinghe', '199245678V',   'Manager L2',         '$2b$10$fTwlHtzwitWDGxL8nr9vxOozjzlpL5mhPKmeaFH4YNH2PUzlcuV7O'),
-  ('ML3001', 'Roshan', 'Bandara',    '198812345678', 'Manager L3',         '$2b$10$fTwlHtzwitWDGxL8nr9vxOozjzlpL5mhPKmeaFH4YNH2PUzlcuV7O')
+INSERT INTO users (user_id, first_name, last_name, nic, role, email, password_hash) VALUES
+  ('Cor001', 'Nimal',  'Perera',     '199012345678', 'Coordinator',       'coordinator@example.com', '$2b$10$fTwlHtzwitWDGxL8nr9vxOozjzlpL5mhPKmeaFH4YNH2PUzlcuV7O'),
+  ('TO001',  'Kasun',  'Silva',      '199523456789', 'Technical Officer', 'technical.officer@example.com', '$2b$10$fTwlHtzwitWDGxL8nr9vxOozjzlpL5mhPKmeaFH4YNH2PUzlcuV7O'),
+  ('ML1001', 'Sunil',  'Fernando',   '198534567V',   'Manager L1',        'manager.l1@example.com', '$2b$10$fTwlHtzwitWDGxL8nr9vxOozjzlpL5mhPKmeaFH4YNH2PUzlcuV7O'),
+  ('ML2001', 'Dilani', 'Jayasinghe', '199245678V',   'Manager L2',        'manager.l2@example.com', '$2b$10$fTwlHtzwitWDGxL8nr9vxOozjzlpL5mhPKmeaFH4YNH2PUzlcuV7O'),
+  ('ML3001', 'Roshan', 'Bandara',    '198812345678', 'Manager L3',        'manager.l3@example.com', '$2b$10$fTwlHtzwitWDGxL8nr9vxOozjzlpL5mhPKmeaFH4YNH2PUzlcuV7O')
 ON CONFLICT (user_id) DO NOTHING;
 
 -- Backfill the password for rows created before this column existed.

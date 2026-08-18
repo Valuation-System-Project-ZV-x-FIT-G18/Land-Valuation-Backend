@@ -1,12 +1,7 @@
-import { IsEmail, IsISO8601, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator'
-import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, PHONE_MESSAGE, PHONE_PATTERN } from '../../../Common_Pages/validation/patterns'
+import { IsEmail, IsISO8601, IsOptional, IsString, Matches, MaxLength, ValidateIf } from 'class-validator'
+import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, PHONE_MESSAGE, PHONE_PATTERN, POSTAL_CODE_MESSAGE, POSTAL_CODE_PATTERN } from '../../../Common_Pages/validation/patterns'
 
 export class UpdateProfileDto {
-  @IsString()
-  @MinLength(1, { message: 'User ID is required.' })
-  @MaxLength(50)
-  userId: string
-
   @IsOptional() @IsString() @MaxLength(60)
   @Matches(NAME_PATTERN, { message: NAME_MESSAGE }) firstName?: string
 
@@ -34,6 +29,7 @@ export class UpdateProfileDto {
   @IsOptional() @IsString() @MaxLength(60) district?: string
   @IsOptional() @IsString() @MaxLength(60)
   @Matches(CITY_PATTERN, { message: CITY_MESSAGE }) city?: string
-  @IsOptional() @IsString() @MaxLength(10) postalCode?: string
+  @IsOptional() @IsString() @MaxLength(10)
+  @Matches(POSTAL_CODE_PATTERN, { message: POSTAL_CODE_MESSAGE }) postalCode?: string
   @IsOptional() @IsString() @MaxLength(255) address?: string
 }

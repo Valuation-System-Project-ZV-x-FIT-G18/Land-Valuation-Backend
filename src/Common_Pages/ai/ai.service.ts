@@ -48,11 +48,24 @@ export class AiService {
     // Retry transient overload/rate errors (503/429) a couple of times.
     let lastStatus = 0
     for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await fetch(`${ENDPOINT}?key=${key}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-      })
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), useSearch ? 40_000 : 12_000)
+      let res: Response
+      try {
+        res = await fetch(`${ENDPOINT}?key=${key}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          signal: controller.signal,
+        })
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw new Error(`Gemini API timed out after ${useSearch ? 40 : 12} seconds`)
+        }
+        throw error
+      } finally {
+        clearTimeout(timeout)
+      }
       if (res.ok) {
         const data = (await res.json()) as {
           candidates?: { content?: { parts?: { text?: string }[] } }[]

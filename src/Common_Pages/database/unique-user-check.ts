@@ -1,3 +1,7 @@
+/*This function checks whether a given NIC or email is already used by another user in the shared users table.
+It ignores blank values, compares emails without case sensitivity, and can exclude the current user during an update. It returns 'nic', 'email', or null if no duplicate exists.
+*/
+
 import { DatabaseService } from './database.service'
 
 // Checks whether a NIC or email is already used by another account in the

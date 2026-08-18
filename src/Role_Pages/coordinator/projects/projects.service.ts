@@ -4,6 +4,7 @@ import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
 import { projectFieldColumns } from './constants/project-fields'
+import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 type Body = {
   applicantNic?: string
@@ -60,21 +61,49 @@ export class ProjectsService implements OnModuleInit {
     return { projectId: row.project_id as string, nic: row.applicant_nic as string }
   }
 
-  async listStatus(q: string) {
+  async listStatus(user: AuthUser, q: string) {
     const v = (q ?? '').trim()
     const cols = `p.project_id, p.applicant_nic, p.property_type, p.status, p.created_at,
                   COALESCE(d.paid, false) AS paid`
-    const sql = v
-      ? `SELECT ${cols}
-           FROM projects p LEFT JOIN drafts d ON d.project_id = p.project_id
-          WHERE p.project_id = $1 OR p.applicant_nic = $1
-          ORDER BY p.created_at DESC`
-      : `SELECT ${cols}
-           FROM projects p LEFT JOIN drafts d ON d.project_id = p.project_id
-          ORDER BY p.created_at DESC
-          LIMIT 100`
-    const r = await this.db.query(sql, v ? [v] : [])
+    const params: string[] = []
+    let access = 'true'
+    if (user.role === 'Loan Applicant') {
+      params.push(user.userId)
+      access = `p.applicant_nic = $${params.length}`
+    } else if (user.role === 'Bank') {
+      params.push(user.userId)
+      access = `EXISTS (SELECT 1 FROM valuations linked
+        WHERE linked.project_id = p.project_id
+          AND linked.details->>'bankBranchCode' = $${params.length})`
+    }
+    let search = ''
+    if (v) {
+      params.push(v)
+      search = `AND (p.project_id = $${params.length} OR p.applicant_nic = $${params.length})`
+    }
+    const r = await this.db.query(
+      `SELECT ${cols} FROM projects p LEFT JOIN drafts d ON d.project_id = p.project_id
+        WHERE ${access} ${search} ORDER BY p.created_at DESC`,
+      params,
+    )
     return r.rows.map((row) => ({
+      projectId: row.project_id as string,
+      nic: row.applicant_nic as string,
+      propertyType: row.property_type as string,
+      status: row.paid ? 'Valuation Completed' : (row.status as string),
+      createdAt: row.created_at as string,
+    }))
+  }
+
+  async dashboardStatus() {
+    const result = await this.db.query(
+      `SELECT p.project_id, p.applicant_nic, p.property_type, p.status, p.created_at,
+              COALESCE(d.paid, false) AS paid
+         FROM projects p
+         LEFT JOIN drafts d ON d.project_id = p.project_id
+        ORDER BY p.created_at DESC`,
+    )
+    return result.rows.map((row) => ({
       projectId: row.project_id as string,
       nic: row.applicant_nic as string,
       propertyType: row.property_type as string,

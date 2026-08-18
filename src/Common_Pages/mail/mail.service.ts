@@ -1,3 +1,4 @@
+//02
 import { Injectable, Logger } from '@nestjs/common'
 import * as nodemailer from 'nodemailer'
 
@@ -40,7 +41,7 @@ export class MailService {
   }
 
   // Sends a loan applicant their login credentials. Never throws.
-  async sendApplicantWelcome(to: string, nic: string, password: string) {
+  async sendApplicantWelcome(to: string, password: string) {
     try {
       const transporter = await this.getTransporter()
       const from =
@@ -54,20 +55,20 @@ export class MailService {
         text:
           `Hello,\n\n` +
           `An account has been created for you on the CODEHUB Land Valuation system.\n\n` +
-          `You can log in using your NIC and the password below:\n` +
-          `  NIC (Login ID): ${nic}\n` +
+          `You can log in using your email address and the password below:\n` +
+          `  Email address: ${to}\n` +
           `  Password: ${password}\n\n` +
-          `Go to the External Login page, choose "Loan Applicant", and sign in with these details.\n\n` +
+          `Go to the External Login page and sign in with these details. Your account type is detected automatically.\n\n` +
           `For your security, please change your password after your first login.\n\n` +
           `Regards,\nCODEHUB Land Valuation Team`,
         html:
           `<p>Hello,</p>` +
           `<p>An account has been created for you on the <b>CODEHUB Land Valuation</b> system.</p>` +
-          `<p>You can log in using your NIC and the password below:</p>` +
+          `<p>You can log in using your email address and the password below:</p>` +
           `<table cellpadding="6" style="border-collapse:collapse">` +
-          `<tr><td><b>NIC (Login ID)</b></td><td>${nic}</td></tr>` +
+          `<tr><td><b>Email address</b></td><td>${to}</td></tr>` +
           `<tr><td><b>Password</b></td><td>${password}</td></tr></table>` +
-          `<p>Go to the <b>External Login</b> page, choose <b>Loan Applicant</b>, and sign in with these details.</p>` +
+          `<p>Go to the <b>External Login</b> page and sign in with these details. Your account type is detected automatically.</p>` +
           `<p style="color:#b45309"><b>For your security, please change your password after your first login.</b></p>` +
           `<p>Regards,<br/>CODEHUB Land Valuation Team</p>`,
       })
@@ -248,9 +249,9 @@ export class MailService {
     }
   }
 
-  // Sends a new staff member (created by an admin) their login id + password,
+  // Sends a new staff member (created by an admin) their email + password,
   // asking them to change it on first login. Never throws.
-  async sendStaffWelcome(to: string, userId: string, password: string, role: string) {
+  async sendStaffWelcome(to: string, password: string, role: string) {
     try {
       const transporter = await this.getTransporter()
       const from =
@@ -264,7 +265,7 @@ export class MailService {
           `Hello,\n\n` +
           `You have been registered on the CODEHUB Land Valuation system as a ${role}.\n\n` +
           `Your login details are:\n` +
-          `  User ID: ${userId}\n` +
+          `  Email address: ${to}\n` +
           `  Password: ${password}\n\n` +
           `Please sign in on the Internal Login page and change your password. ` +
           `For your security, you will be asked to set a new password on your first login.\n\n` +
@@ -274,7 +275,7 @@ export class MailService {
           `<p>You have been registered on the <b>CODEHUB Land Valuation</b> system as a <b>${role}</b>.</p>` +
           `<p>Your login details are:</p>` +
           `<table cellpadding="6" style="border-collapse:collapse">` +
-          `<tr><td><b>User ID</b></td><td>${userId}</td></tr>` +
+          `<tr><td><b>Email address</b></td><td>${to}</td></tr>` +
           `<tr><td><b>Password</b></td><td>${password}</td></tr></table>` +
           `<p style="color:#b45309"><b>Please sign in on the Internal Login page and change your password.</b> ` +
           `You will be asked to set a new password on your first login.</p>` +
@@ -320,9 +321,9 @@ export class MailService {
     }
   }
 
-  // Sends a reset password (with the login ID) after a forgot-password request.
+  // Sends a temporary password after an email-based forgot-password request.
   // The user must change it on next login. Never throws.
-  async sendPasswordReset(to: string, userId: string, password: string) {
+  async sendPasswordReset(to: string, password: string) {
     try {
       const transporter = await this.getTransporter()
       const from = process.env.SMTP_FROM ?? 'CODEHUB Land Valuation <landvaluation.codehub@gmail.com>'
@@ -332,13 +333,13 @@ export class MailService {
         subject: 'Your password has been reset — CODEHUB Land Valuation',
         text:
           `Hello,\n\nYou requested a password reset. Use the details below to sign in:\n\n` +
-          `  User ID: ${userId}\n  New Password: ${password}\n\n` +
+          `  Email address: ${to}\n  New Password: ${password}\n\n` +
           `For your security, you will be asked to set a new password right after you log in.\n\n` +
           `If you did not request this, please contact us.\n\nRegards,\nCODEHUB Land Valuation Team`,
         html:
           `<p>Hello,</p><p>You requested a password reset. Use the details below to sign in:</p>` +
           `<table cellpadding="6" style="border-collapse:collapse">` +
-          `<tr><td><b>User ID</b></td><td>${userId}</td></tr>` +
+          `<tr><td><b>Email address</b></td><td>${to}</td></tr>` +
           `<tr><td><b>New Password</b></td><td>${password}</td></tr></table>` +
           `<p style="color:#b45309"><b>You will be asked to set a new password right after you log in.</b></p>` +
           `<p>If you did not request this, please contact us.</p>` +
@@ -400,8 +401,8 @@ export class MailService {
     }
   }
 
-  // Send a newly-registered bank its login (branch code + password). Never throws.
-  async sendBankWelcome(to: string, branchCode: string, password: string, bankName: string) {
+  // Send a newly-registered bank its email login and password. Never throws.
+  async sendBankWelcome(to: string, password: string, bankName: string) {
     try {
       const transporter = await this.getTransporter()
       const from = process.env.SMTP_FROM ?? 'CODEHUB Land Valuation <landvaluation.codehub@gmail.com>'
@@ -412,8 +413,8 @@ export class MailService {
         text:
           `Hello,\n\n` +
           `${bankName} has been registered on the CODEHUB Land Valuation system.\n\n` +
-          `Log in on the External Login page (choose "Bank") with:\n` +
-          `  Branch Code (Login ID): ${branchCode}\n` +
+          `Log in on the External Login page with:\n` +
+          `  Email address: ${to}\n` +
           `  Password: ${password}\n\n` +
           `You can view the finalised valuation reports for your projects once they are released.\n` +
           `Please change your password after your first login.\n\n` +
@@ -421,9 +422,9 @@ export class MailService {
         html:
           `<p>Hello,</p>` +
           `<p><b>${bankName}</b> has been registered on the <b>CODEHUB Land Valuation</b> system.</p>` +
-          `<p>Log in on the <b>External Login</b> page (choose <b>Bank</b>) with:</p>` +
+          `<p>Log in on the <b>External Login</b> page with:</p>` +
           `<table cellpadding="6" style="border-collapse:collapse">` +
-          `<tr><td><b>Branch Code (Login ID)</b></td><td>${branchCode}</td></tr>` +
+          `<tr><td><b>Email address</b></td><td>${to}</td></tr>` +
           `<tr><td><b>Password</b></td><td>${password}</td></tr></table>` +
           `<p>You can view the finalised valuation reports for your projects once they are released.</p>` +
           `<p style="color:#b45309"><b>Please change your password after your first login.</b></p>` +
@@ -439,8 +440,8 @@ export class MailService {
     }
   }
 
-  // Auto-acknowledge a public contact message or valuation request. Never throws.
-  async sendAcknowledgement(to: string, name: string, kind: 'message' | 'valuation request') {
+  // Auto-acknowledge a public contact message. Never throws.
+  async sendAcknowledgement(to: string, name: string, kind: 'message') {
     try {
       const transporter = await this.getTransporter()
       const from = process.env.SMTP_FROM ?? 'CODEHUB Land Valuation <landvaluation.codehub@gmail.com>'

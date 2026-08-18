@@ -1,10 +1,6 @@
-import { IsArray, IsNumber, IsObject, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator'
 
-export class GenerateAccessDto {
-  @IsString() @MinLength(1) @MaxLength(20) projectId: string
-  @IsNumber() @Min(-90) @Max(90) lat: number
-  @IsNumber() @Min(-180) @Max(180) lng: number
-}
+//01
+import { IsArray, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator'
 
 export class SaveMappingDto {
   @IsString() @MinLength(1) @MaxLength(20) projectId: string

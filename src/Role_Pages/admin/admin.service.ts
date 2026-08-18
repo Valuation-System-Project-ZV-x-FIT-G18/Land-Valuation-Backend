@@ -83,8 +83,8 @@ export class AdminService implements OnModuleInit {
       }
     }
 
-    // A Bank logs in with its Branch Code, so that becomes its login ID; other
-    // roles get an auto-generated prefixed ID (Cor001, TO001, ...).
+    // A bank keeps its Branch Code as the internal account ID; other roles get
+    // an auto-generated prefixed ID (Cor001, TO001, ...). Login uses email.
     let userId: string
     if (dto.role === 'Bank') {
       const code = (dto.branchCode ?? '').trim()
@@ -141,7 +141,7 @@ export class AdminService implements OnModuleInit {
     }
 
     // Email the new staff member their login id + password.
-    await this.mail.sendStaffWelcome(dto.email.trim(), userId, dto.password, dto.role)
+    await this.mail.sendStaffWelcome(dto.email.trim(), dto.password, dto.role)
 
     return { userId }
   }
@@ -167,22 +167,27 @@ export class AdminService implements OnModuleInit {
     }))
   }
 
-  // Edit a user's basic details (identity fields stay fixed).
+  // Edit a user's details. Account ID, NIC and email stay fixed.
   async updateUser(userId: string, dto: UpdateUserDto) {
-    if (dto.email?.trim()) {
-      const dup = await findDuplicateUserField(this.db, { email: dto.email }, userId)
-      if (dup === 'email') throw new BadRequestException('That email is already registered to another account.')
+    if (SINGLETON_ROLES.includes(dto.role)) {
+      const existing = await this.db.query(
+        `SELECT 1 FROM users WHERE role = $1 AND user_id <> $2 LIMIT 1`,
+        [dto.role, userId],
+      )
+      if (existing.rows[0]) {
+        throw new BadRequestException(`A ${dto.role} account already exists. Only one is allowed.`)
+      }
     }
 
     await this.db.query(
-      `UPDATE users SET first_name = $2, last_name = $3, email = $4, phone = $5,
+      `UPDATE users SET first_name = $2, last_name = $3, role = $4, phone = $5,
               province = $6, district = $7, city = $8
         WHERE user_id = $1`,
       [
         userId,
         dto.firstName.trim(),
         (dto.lastName ?? '').trim(),
-        (dto.email ?? '').trim(),
+        dto.role,
         toStoredPhone(dto.phone),
         (dto.province ?? '').trim(),
         (dto.district ?? '').trim(),

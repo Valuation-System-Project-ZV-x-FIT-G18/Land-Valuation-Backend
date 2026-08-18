@@ -1,8 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { ForbiddenException, Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
+import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 // The status set on a project + valuation once a technical officer is assigned.
 const TO_ASSIGNED = 'Technical Officer Assigned'
@@ -57,6 +58,30 @@ export class ValuationsService implements OnModuleInit {
     private readonly notifications: NotificationsService,
     private readonly storage: ObjectStorageService,
   ) {}
+
+  async assertProjectAccess(user: AuthUser, projectId: string) {
+    if (user.role !== 'Bank' && user.role !== 'Loan Applicant') return
+    const id = projectId.trim()
+    const result = user.role === 'Loan Applicant'
+      ? await this.db.query(
+          `SELECT 1 FROM projects WHERE project_id = $1 AND applicant_nic = $2 LIMIT 1`,
+          [id, user.userId],
+        )
+      : await this.db.query(
+          `SELECT 1 FROM valuations
+            WHERE project_id = $1 AND details->>'bankBranchCode' = $2 LIMIT 1`,
+          [id, user.userId],
+        )
+    if (!result.rows[0]) throw new ForbiddenException('You cannot view this project.')
+  }
+
+  async assertRowAccess(user: AuthUser, rowId: string) {
+    if (user.role !== 'Bank' && user.role !== 'Loan Applicant') return
+    const result = await this.db.query(`SELECT project_id FROM valuations WHERE id = $1`, [Number(rowId)])
+    const projectId = String(result.rows[0]?.project_id ?? '')
+    if (!projectId) throw new ForbiddenException('You cannot view this valuation.')
+    await this.assertProjectAccess(user, projectId)
+  }
 
   // Make sure the columns/keys this service needs exist (safe to re-run).
   async onModuleInit() {
@@ -359,8 +384,8 @@ export class ValuationsService implements OnModuleInit {
       : undefined
     const rs = draft?.review_status ?? ''
     const paid = !!draft?.paid
-    // A card payment is approved instantly; a bank-slip payment sits here
-    // ("paid") pending a coordinator's verification before it counts as approved.
+    // A bank-slip payment is submitted first and counts as approved only after
+    // a coordinator verifies it.
     const paidSubmitted = paid || !!draft?.slip_pending
     const l3 = ['pending_l2', 'pending_l1', 'rejected_l2', 'locked'].includes(rs)
     const l2 = ['pending_l1', 'locked'].includes(rs)

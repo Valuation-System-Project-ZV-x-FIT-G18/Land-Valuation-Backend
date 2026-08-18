@@ -13,6 +13,8 @@ import { FileFieldsInterceptor } from '@nestjs/platform-express'
 import { memoryStorage } from 'multer'
 import { ProjectsService } from './projects.service'
 import { CreateProjectDto } from './dto/create-project.dto'
+import { CurrentUser } from '../../../Home_Pages/auth/decorators/current-user.decorator'
+import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 const fileFields = [
   { name: 'surveyPlan', maxCount: 1 },
@@ -39,9 +41,14 @@ export class ProjectsController {
 
   // GET /api/coordinator/projects/status?q=<nic or project id>
   @Get('status')
-  async status(@Query('q') q: string) {
-    const projects = await this.projects.listStatus(q ?? '')
+  async status(@CurrentUser() user: AuthUser, @Query('q') q: string) {
+    const projects = await this.projects.listStatus(user, q ?? '')
     return { projects }
+  }
+
+  @Get('dashboard')
+  async dashboard() {
+    return { projects: await this.projects.dashboardStatus() }
   }
 
   // GET /api/coordinator/projects/details?projectId=...

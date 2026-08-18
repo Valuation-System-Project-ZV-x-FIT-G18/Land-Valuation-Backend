@@ -1,3 +1,4 @@
+//10
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../database/database.service'
 import { ObjectStorageService } from '../storage/object-storage.service'
@@ -51,16 +52,23 @@ export class MessagesService implements OnModuleInit {
     }
   }
 
-  // Users of a given role (to pick a recipient).
-  async listUsersByRole(role: string) {
+  // Search the directory without forcing the sender to know a recipient's role.
+  async searchUsers(viewerId: string, search: string) {
+    const term = search.trim()
     const r = await this.db.query(
-      `SELECT user_id, first_name, last_name FROM users WHERE role = $1
-        ORDER BY first_name, last_name`,
-      [role],
+      `SELECT user_id, first_name, last_name, role, email
+         FROM users
+        WHERE user_id <> $1
+          AND ($2 = '' OR concat_ws(' ', first_name, last_name, role, email, user_id) ILIKE '%' || $2 || '%')
+        ORDER BY first_name, last_name
+        LIMIT 25`,
+      [viewerId, term],
     )
     return r.rows.map((u) => ({
       userId: u.user_id as string,
       name: `${u.first_name} ${u.last_name}`.trim() || (u.user_id as string),
+      role: u.role as string,
+      email: u.email as string,
     }))
   }
 
@@ -95,14 +103,18 @@ export class MessagesService implements OnModuleInit {
     const n = Number(id)
     if (!Number.isInteger(n)) return null
     const r = await this.db.query(
-      `SELECT sender_id, recipient_id, file_name, file_mime, object_key FROM messages WHERE id = $1`,
+      `SELECT sender_id, recipient_id, file_name, file_mime, file_data, object_key FROM messages WHERE id = $1`,
       [n],
     )
     const m = r.rows[0]
-    if (!m?.object_key) return null
+    if (!m || (!m.object_key && !m.file_data)) return null
     if (m.sender_id !== userId && m.recipient_id !== userId) return null // not yours
     const objectData = await this.storage.read(m.object_key as string)
-    return { fileName: m.file_name as string, mime: m.file_mime as string, data: objectData }
+    return {
+      fileName: m.file_name as string,
+      mime: m.file_mime as string,
+      data: objectData ?? (m.file_data as Buffer | null),
+    }
   }
 
   // The full conversation between two users (both directions). Also marks the

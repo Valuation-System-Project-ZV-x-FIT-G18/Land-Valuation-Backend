@@ -3,11 +3,6 @@ import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_PATTERN } from '../../../Commo
 
 export class ChangePasswordDto {
   @IsString()
-  @MinLength(1, { message: 'User ID is required.' })
-  @MaxLength(50)
-  userId: string
-
-  @IsString()
   @MinLength(1, { message: 'Current password is required.' })
   @MaxLength(100)
   currentPassword: string

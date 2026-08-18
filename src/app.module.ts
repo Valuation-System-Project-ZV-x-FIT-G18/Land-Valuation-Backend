@@ -3,7 +3,6 @@ import { ConfigModule } from '@nestjs/config'
 import { DatabaseModule } from './Common_Pages/database/database.module'
 import { MailModule } from './Common_Pages/mail/mail.module'
 import { ContactModule } from './Home_Pages/contact/contact.module'
-import { ValuationModule } from './Home_Pages/valuation/valuation.module'
 import { AuthModule } from './Home_Pages/auth/auth.module'
 import { ApplicantsModule } from './Role_Pages/coordinator/applicants/applicants.module'
 import { ProjectsModule } from './Role_Pages/coordinator/projects/projects.module'
@@ -27,6 +26,7 @@ import { AiModule } from './Common_Pages/ai/ai.module'
 import { BanksModule } from './Role_Pages/coordinator/banks/banks.module'
 import { ObjectStorageModule } from './Common_Pages/storage/object-storage.module'
 import { ChatbotModule } from './Common_Pages/chatbot/chatbot.module'
+import { ValuerProfileModule } from './Role_Pages/manager/valuer-profile/valuer-profile.module'
 
 // The root module. It wires together all the feature modules.
 @Module({
@@ -36,7 +36,6 @@ import { ChatbotModule } from './Common_Pages/chatbot/chatbot.module'
     ObjectStorageModule, // private Supabase object storage
     MailModule, // email sending
     ContactModule, // /api/contact
-    ValuationModule, // /api/valuation
     AuthModule, // /api/auth/login
     ApplicantsModule, // /api/coordinator/applicants/search
     ProjectsModule, // /api/coordinator/projects
@@ -58,6 +57,7 @@ import { ChatbotModule } from './Common_Pages/chatbot/chatbot.module'
     MappingModule, // /api/technical-officer/mapping
     DraftModule, // /api/technical-officer/draft
     ManagerDraftsModule, // /api/manager/drafts
+    ValuerProfileModule, // /api/manager/valuer-profile
     ReportAccessModule, // /api/client (bank view + applicant payment)
   ],
 })

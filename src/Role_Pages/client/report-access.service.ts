@@ -1,8 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../Common_Pages/notifications/notifications.service'
 import { ObjectStorageService } from '../../Common_Pages/storage/object-storage.service'
+import type { AuthUser } from '../../Home_Pages/auth/types/auth-user'
 
 type Row = Record<string, any>
 
@@ -109,6 +110,7 @@ export class ReportAccessService implements OnModuleInit {
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
       // A slip payment waits here until a coordinator verifies it.
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_pending BOOLEAN NOT NULL DEFAULT false`)
+      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS report_price NUMERIC(14,2) NOT NULL DEFAULT 0`)
     } catch (err) {
       this.logger.error(`Report access setup failed: ${(err as Error).message}`)
     }
@@ -119,7 +121,7 @@ export class ReportAccessService implements OnModuleInit {
     const r = await this.db.query(
       `SELECT p.project_id, p.owner_name_as_per_deed, p.village_town, p.district,
               COALESCE(d.review_status,'') AS review_status, COALESCE(d.paid,false) AS paid,
-              COALESCE(d.slip_pending,false) AS slip_pending, la.data AS analysis
+              COALESCE(d.slip_pending,false) AS slip_pending, COALESCE(d.report_price,0) AS report_price, la.data AS analysis
          FROM projects p
          LEFT JOIN drafts d ON d.project_id = p.project_id
          LEFT JOIN land_analyses la ON la.project_id = p.project_id
@@ -137,7 +139,7 @@ export class ReportAccessService implements OnModuleInit {
     const r = await this.db.query(
       `SELECT DISTINCT p.project_id, p.owner_name_as_per_deed, p.village_town, p.district,
               COALESCE(d.review_status,'') AS review_status, COALESCE(d.paid,false) AS paid,
-              COALESCE(d.slip_pending,false) AS slip_pending, la.data AS analysis
+              COALESCE(d.slip_pending,false) AS slip_pending, COALESCE(d.report_price,0) AS report_price, la.data AS analysis
          FROM valuations v
          JOIN projects p ON p.project_id = v.project_id
          LEFT JOIN drafts d ON d.project_id = p.project_id
@@ -149,10 +151,87 @@ export class ReportAccessService implements OnModuleInit {
     return r.rows.map((x: Row) => this.shape(x))
   }
 
+  async bankReport(user: AuthUser, projectId: string) {
+    if (user.role !== 'Bank') throw new ForbiddenException('Only the requesting bank can view this report.')
+    const id = (projectId ?? '').trim()
+    const result = await this.db.query(
+      `SELECT d.data->>'reportHtml' AS report_html, d.review_status, d.paid, d.paid_at
+         FROM drafts d
+        WHERE d.project_id = $1
+          AND EXISTS (
+            SELECT 1 FROM valuations linked
+             WHERE linked.project_id = d.project_id
+               AND linked.details->>'bankBranchCode' = $2
+          )`,
+      [id, user.userId],
+    )
+    const report = result.rows[0] as Row | undefined
+    if (!report) throw new NotFoundException('Report not found for this bank account.')
+    if (report.review_status !== 'locked' || !report.paid) {
+      throw new ForbiddenException('The report is available only after finalization and confirmed payment.')
+    }
+    if (!String(report.report_html ?? '').trim()) throw new NotFoundException('Saved report content not found.')
+    return {
+      projectId: id,
+      reportHtml: String(report.report_html),
+      status: 'locked',
+      paidAt: report.paid_at ? new Date(report.paid_at).toISOString() : null,
+    }
+  }
+
+  async dashboardProjects(user: AuthUser) {
+    if (user.role !== 'Bank' && user.role !== 'Loan Applicant') {
+      throw new ForbiddenException('This dashboard is available only to bank users and loan applicants.')
+    }
+    const applicant = user.role === 'Loan Applicant'
+    const where = applicant
+      ? `p.applicant_nic = $1`
+      : `EXISTS (
+          SELECT 1 FROM valuations linked
+           WHERE linked.project_id = p.project_id
+             AND linked.details->>'bankBranchCode' = $1
+        )`
+    const result = await this.db.query(
+      `SELECT p.project_id, p.applicant_nic, p.owner_name_as_per_deed,
+              p.property_type, p.village_town, p.district, p.status, p.created_at,
+              COALESCE(d.review_status, '') AS review_status,
+              COALESCE(d.paid, false) AS paid,
+              COALESCE(d.slip_pending, false) AS slip_pending,
+              COALESCE(latest.technical_officer_id, '') AS technical_officer_id,
+              COALESCE(latest.valuation_status, '') AS valuation_status
+         FROM projects p
+         LEFT JOIN drafts d ON d.project_id = p.project_id
+         LEFT JOIN LATERAL (
+           SELECT v.technical_officer_id, v.status AS valuation_status
+             FROM valuations v WHERE v.project_id = p.project_id
+            ORDER BY v.valuation_id DESC LIMIT 1
+         ) latest ON true
+        WHERE ${where}
+        ORDER BY p.created_at DESC`,
+      [user.userId],
+    )
+    return (result.rows as Row[]).map((row) => ({
+      projectId: String(row.project_id),
+      applicantNic: String(row.applicant_nic ?? ''),
+      ownerName: String(row.owner_name_as_per_deed || '—'),
+      property: String(row.property_type || 'Property'),
+      location: [row.village_town, row.district].filter(Boolean).join(', '),
+      projectStatus: String(row.status || 'Project Created'),
+      reviewStatus: String(row.review_status ?? ''),
+      valuationStatus: String(row.valuation_status ?? ''),
+      technicalOfficerId: String(row.technical_officer_id ?? ''),
+      paid: Boolean(row.paid),
+      slipPending: Boolean(row.slip_pending),
+      createdAt: row.created_at ? new Date(row.created_at).toISOString() : '',
+      reportAvailable: row.review_status === 'locked' && Boolean(row.paid),
+    }))
+  }
+
   private shape(x: Row) {
     const analysis = (typeof x.analysis === 'string' ? JSON.parse(x.analysis || '{}') : x.analysis) ?? {}
     const marketValue = Number(analysis?.summary?.marketValue) || 0
     const f = computeFee(marketValue)
+    const reportPrice = Number(x.report_price) || 0
     return {
       projectId: x.project_id as string,
       ownerName: (x.owner_name_as_per_deed as string) || '—',
@@ -160,28 +239,14 @@ export class ReportAccessService implements OnModuleInit {
       locked: x.review_status === 'locked',
       paid: !!x.paid,
       slipPending: !!x.slip_pending, // slip uploaded, awaiting coordinator verification
-      fee: f.fee,
+      fee: reportPrice > 0 ? reportPrice : f.fee,
+      reportPrice,
       marketValue: f.marketValue,
       feeBreakdown: f.bands,
       scaleFee: f.scaleFee,
       minFee: f.minFee,
       minApplied: f.minApplied,
     }
-  }
-
-  // Card payment (demo gateway) — mark the report paid.
-  async pay(projectId: string) {
-    const p = (projectId ?? '').trim()
-    if (!p) return { ok: false, error: 'Missing project.' }
-    const ref = 'CARD-' + Date.now()
-    const r = await this.db.query(
-      `UPDATE drafts SET paid = true, paid_at = now(), payment_ref = $2, payment_method = 'card'
-        WHERE project_id = $1 AND review_status = 'locked' AND paid = false`,
-      [p, ref],
-    )
-    if (r.rowCount === 0) return { ok: false, error: 'Report is not available for payment yet.' }
-    await this.notifyPaid(p)
-    return { ok: true, paymentRef: ref }
   }
 
   // Manual bank payment — store the slip and mark it PENDING coordinator
