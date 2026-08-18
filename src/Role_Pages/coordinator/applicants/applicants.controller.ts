@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common'
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common'
 import { ApplicantsService } from './applicants.service'
 import { RegisterApplicantDto } from './dto/register-applicant.dto'
+import { UpdateApplicantDto } from './dto/update-applicant.dto'
 
 // Loan applicant lookup + registration for the coordinator's Create Project flow.
 @Controller('coordinator/applicants')
@@ -25,6 +26,13 @@ export class ApplicantsController {
   @Post('register')
   async register(@Body() dto: RegisterApplicantDto) {
     const applicant = await this.applicantsService.register(dto)
+    return { ok: true, applicant }
+  }
+
+  // PATCH /api/coordinator/applicants/:nic — correct an existing applicant's details.
+  @Patch(':nic')
+  async update(@Param('nic') nic: string, @Body() dto: UpdateApplicantDto) {
+    const applicant = await this.applicantsService.update(nic, dto)
     return { ok: true, applicant }
   }
 }

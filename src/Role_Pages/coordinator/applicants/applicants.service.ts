@@ -1,10 +1,12 @@
-import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common'
 import * as bcrypt from 'bcryptjs'
+import { randomBytes } from 'crypto'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 import { findDuplicateUserField } from '../../../Common_Pages/database/unique-user-check'
 import { RegisterApplicantDto } from './dto/register-applicant.dto'
+import { UpdateApplicantDto } from './dto/update-applicant.dto'
 import { toStoredPhone } from '../../../Common_Pages/validation/patterns'
 
 // Loan applicants are stored in the shared `users` table with role 'Loan Applicant'.
@@ -74,7 +76,10 @@ export class ApplicantsService implements OnModuleInit {
     if (dup === 'nic') throw new BadRequestException('That NIC is already registered to another account.')
     if (dup === 'email') throw new BadRequestException('That email is already registered to another account.')
 
-    const passwordHash = await bcrypt.hash(data.password, 10)
+    // Generate credentials on the trusted server. This satisfies the strong
+    // password policy and avoids exposing password creation in the UI.
+    const temporaryPassword = `Ap7@${randomBytes(12).toString('base64url')}`
+    const passwordHash = await bcrypt.hash(temporaryPassword, 10)
     try {
       await this.db.query(
         `INSERT INTO users
@@ -113,7 +118,7 @@ export class ApplicantsService implements OnModuleInit {
     // Email + notification are best-effort — a mail/SMTP hiccup must NOT fail the
     // registration (the applicant is already saved above).
     try {
-      await this.mail.sendApplicantWelcome(data.email, data.password)
+      await this.mail.sendApplicantWelcome(data.email, temporaryPassword)
       await this.notifications.create(
         data.nic.trim(),
         'You have been registered as a Loan Applicant on CODEHUB Land Valuation. Please change your password on first login.',
@@ -123,5 +128,35 @@ export class ApplicantsService implements OnModuleInit {
     }
 
     return this.findByNic(data.nic)
+  }
+
+  // Correct an existing applicant's details. The NIC (their user_id / login id)
+  // is fixed and identifies the row; everything else here can be edited.
+  async update(nic: string, data: UpdateApplicantDto) {
+    const existing = await this.findByNic(nic)
+    if (!existing) throw new NotFoundException('No applicant found for that NIC.')
+
+    // The email must stay unique across all accounts — but the applicant may
+    // keep their own email, so exclude their own row (user_id = NIC) from the check.
+    const dup = await findDuplicateUserField(this.db, { email: data.email }, existing.userId)
+    if (dup === 'email') throw new BadRequestException('That email is already registered to another account.')
+
+    await this.db.query(
+      `UPDATE users
+          SET first_name = $2, last_name = $3, initials = $4, applicant_business_name = $5,
+              email = $6, phone = $7
+        WHERE nic = $1 AND role = 'Loan Applicant'`,
+      [
+        nic.trim(),
+        data.firstName.trim(),
+        data.lastName.trim(),
+        data.initials.trim(),
+        (data.applicantBusinessName ?? '').trim(),
+        data.email.trim(),
+        toStoredPhone(data.phone),
+      ],
+    )
+
+    return this.findByNic(nic)
   }
 }

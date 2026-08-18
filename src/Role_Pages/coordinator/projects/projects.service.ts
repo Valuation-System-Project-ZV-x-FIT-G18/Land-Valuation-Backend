@@ -77,13 +77,26 @@ export class ProjectsService implements OnModuleInit {
           AND linked.details->>'bankBranchCode' = $${params.length})`
     }
     let search = ''
+    let ranking = 'p.created_at DESC'
+    let limit = 'LIMIT 100'
     if (v) {
+      params.push(`%${v}%`)
+      const containsIndex = params.length
       params.push(v)
-      search = `AND (p.project_id = $${params.length} OR p.applicant_nic = $${params.length})`
+      const exactIndex = params.length
+      params.push(`${v}%`)
+      const prefixIndex = params.length
+      search = `AND (p.project_id ILIKE $${containsIndex} OR p.applicant_nic ILIKE $${containsIndex})`
+      ranking = `CASE
+        WHEN LOWER(p.project_id) = LOWER($${exactIndex}) OR p.applicant_nic = $${exactIndex} THEN 0
+        WHEN p.project_id ILIKE $${prefixIndex} THEN 1
+        WHEN p.applicant_nic ILIKE $${prefixIndex} THEN 2
+        ELSE 3 END, p.created_at DESC`
+      limit = 'LIMIT 20'
     }
     const r = await this.db.query(
       `SELECT ${cols} FROM projects p LEFT JOIN drafts d ON d.project_id = p.project_id
-        WHERE ${access} ${search} ORDER BY p.created_at DESC`,
+        WHERE ${access} ${search} ORDER BY ${ranking} ${limit}`,
       params,
     )
     return r.rows.map((row) => ({
