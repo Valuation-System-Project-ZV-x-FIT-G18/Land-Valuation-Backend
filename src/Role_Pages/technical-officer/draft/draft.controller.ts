@@ -1,13 +1,16 @@
 //04
-import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common'
+import { BadRequestException, Body, Controller, Get, Headers, Post, Query, Res } from '@nestjs/common'
 import type { Response } from 'express'
 import { DraftService } from './draft.service'
 import { DocxReportService } from './docx-report.service'
 import { SaveDraftDto } from './dto/save-draft.dto'
+import { PdfReportService } from './pdf-report.service'
+import { CurrentUser } from '../../../Home_Pages/auth/decorators/current-user.decorator'
+import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 @Controller('technical-officer/draft')
 export class DraftController {
-  constructor(private readonly draft: DraftService, private readonly docx: DocxReportService) {}
+  constructor(private readonly draft: DraftService, private readonly docx: DocxReportService, private readonly pdf: PdfReportService) {}
 
   // GET /build?projectId=...
   @Get('build')
@@ -24,6 +27,23 @@ export class DraftController {
     if (!file) { res.status(404).json({ error: 'Project not found.' }); return }
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
     res.setHeader('Content-Disposition', `attachment; filename="Valuation-Report-${id}.docx"`)
+    res.send(file)
+  }
+
+  @Get('pdf')
+  async pdfReport(
+    @Query('projectId') projectId: string,
+    @Query('type') type: string,
+    @CurrentUser() user: AuthUser,
+    @Headers('authorization') authorization: string,
+    @Res() res: Response,
+  ) {
+    if (type !== 'draft' && type !== 'final') throw new BadRequestException('PDF type must be draft or final.')
+    const id = (projectId ?? '').trim()
+    const file = await this.pdf.generate(id, type, user, authorization ?? '')
+    const filename = type === 'draft' ? `Draft-Report-${id}.pdf` : `Final-Valuation-Report-${id}.pdf`
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
     res.send(file)
   }
 

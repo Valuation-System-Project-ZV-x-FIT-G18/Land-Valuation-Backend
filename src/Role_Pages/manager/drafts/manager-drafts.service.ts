@@ -1,7 +1,8 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
+import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 type Row = Record<string, any>
 
@@ -33,6 +34,72 @@ export class ManagerDraftsService implements OnModuleInit {
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS reject_reason TEXT NOT NULL DEFAULT ''`)
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT false`)
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS report_price NUMERIC(14,2) NOT NULL DEFAULT 0`)
+      await this.db.query(`CREATE TABLE IF NOT EXISTS manager_review_activities (
+        id BIGSERIAL PRIMARY KEY,
+        project_id VARCHAR(20) NOT NULL,
+        from_status VARCHAR(40) NOT NULL DEFAULT '',
+        to_status VARCHAR(40) NOT NULL,
+        actor_user_id VARCHAR(100) NOT NULL DEFAULT '',
+        actor_role VARCHAR(40) NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`)
+      await this.db.query(`ALTER TABLE manager_review_activities
+        ADD COLUMN IF NOT EXISTS action VARCHAR(20) NOT NULL DEFAULT ''`)
+      await this.db.query(`UPDATE manager_review_activities SET action = CASE
+          WHEN to_status IN ('pending_l2', 'pending_l1', 'locked') THEN 'approved'
+          WHEN to_status IN ('rejected_to_to', 'rejected_l3', 'rejected_l2') THEN 'rejected'
+          ELSE 'updated'
+        END
+        WHERE action = ''`)
+      await this.db.query(`CREATE INDEX IF NOT EXISTS idx_manager_review_activities_created
+        ON manager_review_activities (created_at DESC)`)
+      // Preserve the latest known workflow change for reports created before
+      // the activity log existed. Future transitions are recorded individually.
+      await this.db.query(`INSERT INTO manager_review_activities
+          (project_id, action, from_status, to_status, actor_role, created_at)
+        SELECT d.project_id,
+          CASE
+            WHEN d.review_status IN ('pending_l2', 'pending_l1', 'locked') THEN 'approved'
+            ELSE 'rejected'
+          END,
+          '', d.review_status,
+          CASE d.review_status
+            WHEN 'pending_l2' THEN 'Manager L3'
+            WHEN 'rejected_to_to' THEN 'Manager L3'
+            WHEN 'pending_l1' THEN 'Manager L2'
+            WHEN 'rejected_l3' THEN 'Manager L2'
+            WHEN 'locked' THEN 'Manager L1'
+            WHEN 'rejected_l2' THEN 'Manager L1'
+            ELSE 'Manager'
+          END,
+          d.created_at
+        FROM drafts d
+        WHERE d.review_status IN ('pending_l2', 'rejected_to_to', 'pending_l1', 'rejected_l3', 'locked', 'rejected_l2')
+          AND NOT EXISTS (
+            SELECT 1 FROM manager_review_activities a WHERE a.project_id = d.project_id
+          )`)
+      // Reconstruct prerequisite approvals for reports that completed stages
+      // before the history table was introduced. The workflow is strictly
+      // L3 -> L2 -> L1, so these approvals are implied by the current state.
+      await this.db.query(`INSERT INTO manager_review_activities
+          (project_id, action, from_status, to_status, actor_role, created_at)
+        SELECT d.project_id, 'approved', 'pending_l3', 'pending_l2', 'Manager L3', d.created_at
+          FROM drafts d
+         WHERE d.review_status IN ('pending_l2', 'rejected_l3', 'pending_l1', 'rejected_l2', 'locked')
+           AND NOT EXISTS (
+             SELECT 1 FROM manager_review_activities a
+              WHERE a.project_id = d.project_id AND a.actor_role = 'Manager L3' AND a.action = 'approved'
+           )`)
+      await this.db.query(`INSERT INTO manager_review_activities
+          (project_id, action, from_status, to_status, actor_role, created_at)
+        SELECT d.project_id, 'approved', 'pending_l2', 'pending_l1', 'Manager L2', d.created_at
+          FROM drafts d
+         WHERE d.review_status IN ('pending_l1', 'rejected_l2', 'locked')
+           AND NOT EXISTS (
+             SELECT 1 FROM manager_review_activities a
+              WHERE a.project_id = d.project_id AND a.actor_role = 'Manager L2' AND a.action = 'approved'
+           )`)
     } catch (err) {
       this.logger.error(`Manager drafts setup failed: ${(err as Error).message}`)
     }
@@ -44,12 +111,18 @@ export class ManagerDraftsService implements OnModuleInit {
   //  'final'       — locked reports (L1 only)
   //  'approved'    — drafts this level has approved and passed further up (L2/L3)
   //  'rejected'    — drafts this level has rejected further down (L2/L3)
-  async projects(level: string, view: 'check' | 'corrections' | 'final' | 'approved' | 'rejected' = 'check') {
+  async projects(user: AuthUser, requestedLevel: string, view: 'check' | 'corrections' | 'final' | 'approved' | 'rejected' = 'check') {
+    if (view === 'final' && user.role !== 'Manager L1') {
+      throw new ForbiddenException('Only Manager L1 can view finalized reports.')
+    }
+    // Never trust a query-string level for authorization or filtering.
+    const level = user.role === 'Manager L1' ? 'L1' : user.role === 'Manager L2' ? 'L2' : user.role === 'Manager L3' ? 'L3' : requestedLevel
     const r = await this.db.query(
       `SELECT v.project_id, v.valuation_id, v.status, v.technical_officer_id,
               p.owner_name_as_per_deed, p.village_town, p.district,
               u.first_name, u.last_name,
-              COALESCE(d.review_status, 'draft') AS review_status, COALESCE(d.reject_reason,'') AS reject_reason
+              COALESCE(d.review_status, 'draft') AS review_status, COALESCE(d.reject_reason,'') AS reject_reason,
+              d.created_at AS updated_at
          FROM valuations v
          JOIN projects p ON p.project_id = v.project_id
          LEFT JOIN users u ON u.user_id = p.applicant_nic
@@ -67,6 +140,7 @@ export class ManagerDraftsService implements OnModuleInit {
           location: [x.village_town, x.district].filter(Boolean).join(', '),
           reviewStatus: x.review_status,
           rejectReason: x.reject_reason,
+          updatedAt: x.updated_at ? new Date(x.updated_at).toISOString() : '',
           valuations: [],
         })
       }
@@ -76,27 +150,28 @@ export class ManagerDraftsService implements OnModuleInit {
         technicalOfficerId: x.technical_officer_id ?? '',
       })
     }
-    // "Check Drafts" = new arrivals to review; "Corrections" = sent back to fix;
-    // "Final" = locked reports (L1 only); "Approved" = this level's drafts that
-    // have since moved further up the chain (or, for L1, been locked); "Rejected"
-    // = drafts this level sent back down the chain.
+    // Current-work views use current status. Approved/rejected views are audit
+    // history and must remain true after the report advances to another stage.
     const CHECK: Record<string, string> = { L3: 'pending_l3', L2: 'pending_l2', L1: 'pending_l1' }
     const CORRECTIONS: Record<string, string> = { L3: 'rejected_l3', L2: 'rejected_l2' }
-    const APPROVED: Record<string, string[]> = {
-      L3: ['pending_l2', 'rejected_l2', 'pending_l1', 'locked'],
-      L2: ['pending_l1', 'locked'],
-      L1: ['locked'],
-    }
-    // L1 rejects down to L2 (rejected_l2); L2 rejects down to L3 (rejected_l3);
-    // L3 rejects down to the Technical Officer (rejected_to_to).
-    const REJECTED: Record<string, string> = { L1: 'rejected_l2', L2: 'rejected_l3', L3: 'rejected_to_to' }
     let list = Array.from(map.values())
-    if (view === 'approved') {
-      const want = APPROVED[level] ?? []
-      list = want.length ? list.filter((p) => want.includes(p.reviewStatus)) : []
-    } else if (view === 'rejected') {
-      const want = REJECTED[level] ?? ''
-      list = want ? list.filter((p) => p.reviewStatus === want) : []
+    if (view === 'approved' || view === 'rejected') {
+      const actorRole = `Manager ${level}`
+      const history = await this.db.query(
+        `SELECT project_id, MAX(created_at) AS action_at
+           FROM manager_review_activities
+          WHERE actor_role = $1 AND action = $2
+          GROUP BY project_id`,
+        [actorRole, view === 'approved' ? 'approved' : 'rejected'],
+      )
+      const actionAt = new Map((history.rows as Row[]).map((row) => [
+        String(row.project_id),
+        row.action_at ? new Date(row.action_at).toISOString() : '',
+      ]))
+      list = list
+        .filter((project) => actionAt.has(project.projectId))
+        .map((project) => ({ ...project, workflowActionAt: actionAt.get(project.projectId) ?? '' }))
+        .sort((a, b) => String(b.workflowActionAt).localeCompare(String(a.workflowActionAt)))
     } else {
       const want = view === 'final' ? 'locked' : view === 'corrections' ? CORRECTIONS[level] ?? '' : CHECK[level] ?? ''
       list = want ? list.filter((p) => p.reviewStatus === want) : []
@@ -123,9 +198,67 @@ export class ManagerDraftsService implements OnModuleInit {
     }
   }
 
-  async action(projectId: string, reportHtml: string | undefined, status: string, reason = '', valuationDate?: string, reportPrice?: number) {
+  async report(user: AuthUser, projectId: string) {
+    const p = projectId.trim()
+    const result = await this.db.query(
+      `SELECT data->>'reportHtml' AS report_html, review_status, created_at
+         FROM drafts WHERE project_id = $1`,
+      [p],
+    )
+    const row = result.rows[0]
+    if (!row) throw new NotFoundException('Draft report not found.')
+    if (String(row.review_status) === 'locked' && user.role !== 'Manager L1') {
+      throw new ForbiddenException('Only Manager L1 can view a finalized report.')
+    }
+    return {
+      reportHtml: String(row.report_html ?? ''),
+      reviewStatus: String(row.review_status ?? 'draft'),
+      updatedAt: row.created_at ? new Date(row.created_at).toISOString() : '',
+    }
+  }
+
+  async recentActivities(limit = 8) {
+    const safeLimit = Math.min(Math.max(Math.trunc(limit) || 8, 1), 20)
+    const result = await this.db.query(
+      `SELECT project_id, action, from_status, to_status, actor_user_id, actor_role, reason, created_at
+         FROM manager_review_activities
+        ORDER BY created_at DESC, id DESC
+        LIMIT $1`,
+      [safeLimit],
+    )
+    return (result.rows as Row[]).map((row) => ({
+      projectId: String(row.project_id),
+      action: String(row.action ?? ''),
+      fromStatus: String(row.from_status ?? ''),
+      toStatus: String(row.to_status),
+      actorUserId: String(row.actor_user_id ?? ''),
+      actorRole: String(row.actor_role),
+      reason: String(row.reason ?? ''),
+      createdAt: row.created_at ? new Date(row.created_at).toISOString() : '',
+    }))
+  }
+
+  async action(user: AuthUser, projectId: string, reportHtml: string | undefined, status: string, reason = '', valuationDate?: string, reportPrice?: number) {
     const p = (projectId ?? '').trim()
     if (!p || !status) return { ok: false, error: 'Missing project or status.' }
+    const existing = (await this.db.query(
+      `SELECT review_status FROM drafts WHERE project_id = $1`, [p],
+    )).rows[0]
+    if (!existing) throw new NotFoundException('Draft report not found.')
+    const currentStatus = String(existing.review_status ?? 'draft')
+
+    // Locked reports are immutable. This blocks edits, rejection and repeated
+    // locking even if a caller bypasses the frontend controls.
+    if (currentStatus === 'locked') {
+      throw new ConflictException('This report is finalized and locked. It cannot be edited or returned.')
+    }
+    if (status === 'locked') {
+      if (user.role !== 'Manager L1') throw new ForbiddenException('Only a Manager L1 can give final approval and lock a report.')
+      if (currentStatus !== 'pending_l1') throw new ConflictException('Only a report pending L1 review can be finalized and locked.')
+    }
+    if (status === 'rejected_l2' && (user.role !== 'Manager L1' || currentStatus !== 'pending_l1')) {
+      throw new ForbiddenException('Only Manager L1 can return a pending L1 report to L2.')
+    }
     if (status === 'locked' && (!Number.isFinite(reportPrice) || Number(reportPrice) <= 0)) {
       return { ok: false, error: 'A valid report price is required before locking.' }
     }
@@ -147,6 +280,22 @@ export class ManagerDraftsService implements OnModuleInit {
     }
     if (status === 'locked') {
       await this.db.query(`UPDATE drafts SET report_price = $2 WHERE project_id = $1`, [p, reportPrice])
+    }
+    if (status !== currentStatus) {
+      await this.db.query(
+        `INSERT INTO manager_review_activities
+          (project_id, action, from_status, to_status, actor_user_id, actor_role, reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          p,
+          ['pending_l2', 'pending_l1', 'locked'].includes(status) ? 'approved' : 'rejected',
+          currentStatus,
+          status,
+          user.userId,
+          user.role,
+          reason,
+        ],
+      )
     }
     await this.notifyAction(p, status)
     return { ok: true }

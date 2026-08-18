@@ -2,6 +2,15 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@
 import type { AuthUser } from '../types/auth-user'
 
 const allowedForPath = (path: string, role: string) => {
+  if (path.startsWith('/api/technical-officer/draft/pdf')) {
+    return role === 'Technical Officer' || role.startsWith('Manager L')
+  }
+  if (path.startsWith('/api/technical-officer/site-photos/file')) {
+    return role === 'Technical Officer' || role.startsWith('Manager L')
+  }
+  if (path.startsWith('/api/coordinator/projects/file')) {
+    return role === 'Coordinator' || role === 'Technical Officer' || role.startsWith('Manager L')
+  }
   if (path.startsWith('/api/admin')) return role === 'Admin'
   if (path.startsWith('/api/technical-officer')) return role === 'Technical Officer'
   if (path.startsWith('/api/manager')) return role.startsWith('Manager')
