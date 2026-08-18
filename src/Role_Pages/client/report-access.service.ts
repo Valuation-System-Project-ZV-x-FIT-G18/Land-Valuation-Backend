@@ -1,8 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { ForbiddenException, Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../Common_Pages/notifications/notifications.service'
 import { ObjectStorageService } from '../../Common_Pages/storage/object-storage.service'
+import type { AuthUser } from '../../Home_Pages/auth/types/auth-user'
 
 type Row = Record<string, any>
 
@@ -148,6 +149,54 @@ export class ReportAccessService implements OnModuleInit {
       [(bankUserId ?? '').trim()],
     )
     return r.rows.map((x: Row) => this.shape(x))
+  }
+
+  async dashboardProjects(user: AuthUser) {
+    if (user.role !== 'Bank' && user.role !== 'Loan Applicant') {
+      throw new ForbiddenException('This dashboard is available only to bank users and loan applicants.')
+    }
+    const applicant = user.role === 'Loan Applicant'
+    const where = applicant
+      ? `p.applicant_nic = $1`
+      : `EXISTS (
+          SELECT 1 FROM valuations linked
+           WHERE linked.project_id = p.project_id
+             AND linked.details->>'bankBranchCode' = $1
+        )`
+    const result = await this.db.query(
+      `SELECT p.project_id, p.applicant_nic, p.owner_name_as_per_deed,
+              p.property_type, p.village_town, p.district, p.status, p.created_at,
+              COALESCE(d.review_status, '') AS review_status,
+              COALESCE(d.paid, false) AS paid,
+              COALESCE(d.slip_pending, false) AS slip_pending,
+              COALESCE(latest.technical_officer_id, '') AS technical_officer_id,
+              COALESCE(latest.valuation_status, '') AS valuation_status
+         FROM projects p
+         LEFT JOIN drafts d ON d.project_id = p.project_id
+         LEFT JOIN LATERAL (
+           SELECT v.technical_officer_id, v.status AS valuation_status
+             FROM valuations v WHERE v.project_id = p.project_id
+            ORDER BY v.valuation_id DESC LIMIT 1
+         ) latest ON true
+        WHERE ${where}
+        ORDER BY p.created_at DESC`,
+      [user.userId],
+    )
+    return (result.rows as Row[]).map((row) => ({
+      projectId: String(row.project_id),
+      applicantNic: String(row.applicant_nic ?? ''),
+      ownerName: String(row.owner_name_as_per_deed || '—'),
+      property: String(row.property_type || 'Property'),
+      location: [row.village_town, row.district].filter(Boolean).join(', '),
+      projectStatus: String(row.status || 'Project Created'),
+      reviewStatus: String(row.review_status ?? ''),
+      valuationStatus: String(row.valuation_status ?? ''),
+      technicalOfficerId: String(row.technical_officer_id ?? ''),
+      paid: Boolean(row.paid),
+      slipPending: Boolean(row.slip_pending),
+      createdAt: row.created_at ? new Date(row.created_at).toISOString() : '',
+      reportAvailable: row.review_status === 'locked' && Boolean(row.paid),
+    }))
   }
 
   private shape(x: Row) {

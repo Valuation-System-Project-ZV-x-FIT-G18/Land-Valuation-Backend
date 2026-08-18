@@ -44,6 +44,11 @@ export class ProjectsController {
     return { projects }
   }
 
+  @Get('dashboard')
+  async dashboard() {
+    return { projects: await this.projects.dashboardStatus() }
+  }
+
   // GET /api/coordinator/projects/details?projectId=...
   @Get('details')
   async details(@Query('projectId') projectId: string) {

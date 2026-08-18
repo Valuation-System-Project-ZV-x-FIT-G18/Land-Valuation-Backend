@@ -83,6 +83,23 @@ export class ProjectsService implements OnModuleInit {
     }))
   }
 
+  async dashboardStatus() {
+    const result = await this.db.query(
+      `SELECT p.project_id, p.applicant_nic, p.property_type, p.status, p.created_at,
+              COALESCE(d.paid, false) AS paid
+         FROM projects p
+         LEFT JOIN drafts d ON d.project_id = p.project_id
+        ORDER BY p.created_at DESC`,
+    )
+    return result.rows.map((row) => ({
+      projectId: row.project_id as string,
+      nic: row.applicant_nic as string,
+      propertyType: row.property_type as string,
+      status: row.paid ? 'Valuation Completed' : (row.status as string),
+      createdAt: row.created_at as string,
+    }))
+  }
+
   async create(body: Body, files: Files) {
     const detailsJson = body.data || '{}'
     let details: Record<string, unknown> = {}

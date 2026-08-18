@@ -13,6 +13,8 @@ import { memoryStorage } from 'multer'
 import type { Response } from 'express'
 import { ReportAccessService } from './report-access.service'
 import { PaySlipDto, VerifySlipDto } from './dto/client.dto'
+import { CurrentUser } from '../../Home_Pages/auth/decorators/current-user.decorator'
+import type { AuthUser } from '../../Home_Pages/auth/types/auth-user'
 
 @Controller('client')
 export class ReportAccessController {
@@ -61,6 +63,12 @@ export class ReportAccessController {
   @Get('bank/projects')
   async bankProjects(@Query('bankId') bankId: string) {
     return { projects: await this.service.bankProjects(bankId ?? '') }
+  }
+
+  // Authenticated operational overview for Bank and Loan Applicant dashboards.
+  @Get('dashboard/projects')
+  async dashboardProjects(@CurrentUser() user: AuthUser) {
+    return { projects: await this.service.dashboardProjects(user) }
   }
 
   // GET /api/client/can-view?projectId=...
