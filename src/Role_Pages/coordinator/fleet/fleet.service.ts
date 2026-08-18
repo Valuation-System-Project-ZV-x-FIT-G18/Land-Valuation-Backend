@@ -469,11 +469,18 @@ export class FleetService implements OnModuleInit {
   }
 
   // Remove a marked leave (officer is coming after all → back to available).
-  async removeLeave(id: string) {
+  async removeLeave(id: string, expectedToId = '') {
     const n = Number(id)
     if (!Number.isInteger(n)) return { ok: false, error: 'Invalid leave.' }
-    await this.db.query(`DELETE FROM to_leaves WHERE id = $1`, [n])
-    return { ok: true }
+    const result = await this.db.query(
+      `DELETE FROM to_leaves
+        WHERE id = $1
+          AND ($2 = '' OR to_id = $2)
+          AND ($2 = '' OR status = 'Pending')
+      RETURNING id`,
+      [n, expectedToId],
+    )
+    return result.rowCount ? { ok: true } : { ok: false, error: 'Leave request not found or cannot be removed.' }
   }
 
   private async notifyCoordinators(msg: string) {

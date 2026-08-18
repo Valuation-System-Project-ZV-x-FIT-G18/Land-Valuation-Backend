@@ -17,6 +17,14 @@ const allowedForPath = (path: string, role: string) => {
   if (path.startsWith('/api/applicant')) return role === 'Loan Applicant'
   if (path.startsWith('/api/coordinator')) {
     if (
+      role === 'Technical Officer' &&
+      (
+        path.startsWith('/api/coordinator/fleet/leaves') ||
+        path.startsWith('/api/coordinator/fleet/mark-leave') ||
+        path.startsWith('/api/coordinator/fleet/remove-leave')
+      )
+    ) return true
+    if (
       path.startsWith('/api/coordinator/projects/status') ||
       path.startsWith('/api/coordinator/valuations/by-project') ||
       path.startsWith('/api/coordinator/valuations/status') ||

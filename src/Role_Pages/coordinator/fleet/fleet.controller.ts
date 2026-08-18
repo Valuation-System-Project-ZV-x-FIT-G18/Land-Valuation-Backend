@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common'
 import { FleetService } from './fleet.service'
+import { CurrentUser } from '../../../Home_Pages/auth/decorators/current-user.decorator'
+import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 import {
   AcceptRejectionDto,
   AssignmentActionDto,
@@ -58,20 +60,22 @@ export class FleetController {
 
   // GET /api/coordinator/fleet/leaves?toId= — today's + upcoming marked leaves.
   @Get('leaves')
-  async leaves(@Query('toId') toId: string) {
-    return { leaves: await this.fleet.leaves(toId ?? '') }
+  async leaves(@CurrentUser() user: AuthUser, @Query('toId') toId: string) {
+    const officerId = user.role === 'Technical Officer' ? user.userId : (toId ?? '')
+    return { leaves: await this.fleet.leaves(officerId) }
   }
 
   // POST /api/coordinator/fleet/mark-leave  { toId, reason, date }
   @Post('mark-leave')
-  async markLeave(@Body() dto: MarkLeaveDto) {
-    return this.fleet.markLeave(dto.toId, dto.reason ?? '', dto.date)
+  async markLeave(@CurrentUser() user: AuthUser, @Body() dto: MarkLeaveDto) {
+    const officerId = user.role === 'Technical Officer' ? user.userId : dto.toId
+    return this.fleet.markLeave(officerId, dto.reason ?? '', dto.date)
   }
 
   // POST /api/coordinator/fleet/remove-leave  { id }
   @Post('remove-leave')
-  async removeLeave(@Body() dto: RemoveLeaveDto) {
-    return this.fleet.removeLeave(dto.id)
+  async removeLeave(@CurrentUser() user: AuthUser, @Body() dto: RemoveLeaveDto) {
+    return this.fleet.removeLeave(dto.id, user.role === 'Technical Officer' ? user.userId : '')
   }
 
   // POST /api/coordinator/fleet/approve-leave  { id }
