@@ -251,9 +251,6 @@ export class DescriptionsService implements OnModuleInit {
   }
 
   private async generateText(section: TextSection, fields: Record<string, string>) {
-    const reportText = this.reportStyleTemplate(section, fields)
-    if (reportText !== null) return { text: reportText, aiUsed: false }
-
     if (this.ai.isEnabled()) {
       try {
         const hint =
@@ -275,6 +272,12 @@ export class DescriptionsService implements OnModuleInit {
         this.logger.error(`AI generation (${section}) failed: ${(err as Error).message}`)
       }
     }
+
+    // Use deterministic report wording only when AI is unavailable or the
+    // AI request fails/returns no text.
+    const reportText = this.reportStyleTemplate(section, fields)
+    if (reportText !== null) return { text: reportText, aiUsed: false }
+
     return { text: this.tpl(section, fields), aiUsed: false }
   }
 

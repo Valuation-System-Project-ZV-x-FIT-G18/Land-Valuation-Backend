@@ -2,6 +2,8 @@ import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundExce
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
+import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
+import { PdfReportService } from '../../technical-officer/draft/pdf-report.service'
 import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 type Row = Record<string, any>
@@ -21,6 +23,8 @@ export class ManagerDraftsService implements OnModuleInit {
     private readonly db: DatabaseService,
     private readonly mail: MailService,
     private readonly notifications: NotificationsService,
+    private readonly storage: ObjectStorageService,
+    private readonly pdf: PdfReportService,
   ) {}
 
   async onModuleInit() {
@@ -34,6 +38,10 @@ export class ManagerDraftsService implements OnModuleInit {
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS reject_reason TEXT NOT NULL DEFAULT ''`)
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT false`)
       await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS report_price NUMERIC(14,2) NOT NULL DEFAULT 0`)
+      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS final_report_object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS final_report_name VARCHAR(255) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS final_report_mime VARCHAR(100) NOT NULL DEFAULT ''`)
+      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS final_report_generated_at TIMESTAMPTZ`)
       await this.db.query(`CREATE TABLE IF NOT EXISTS manager_review_activities (
         id BIGSERIAL PRIMARY KEY,
         project_id VARCHAR(20) NOT NULL,
@@ -272,11 +280,11 @@ export class ManagerDraftsService implements OnModuleInit {
     }))
   }
 
-  async action(user: AuthUser, projectId: string, reportHtml: string | undefined, status: string, reason = '', valuationDate?: string, reportPrice?: number) {
+  async action(user: AuthUser, projectId: string, reportHtml: string | undefined, status: string, reason = '', valuationDate?: string, reportPrice?: number, authorization = '') {
     const p = (projectId ?? '').trim()
     if (!p || !status) return { ok: false, error: 'Missing project or status.' }
     const existing = (await this.db.query(
-      `SELECT review_status FROM drafts WHERE project_id = $1`, [p],
+      `SELECT review_status, data->>'reportHtml' AS report_html FROM drafts WHERE project_id = $1`, [p],
     )).rows[0]
     if (!existing) throw new NotFoundException('Draft report not found.')
     const currentStatus = String(existing.review_status ?? 'draft')
@@ -296,6 +304,18 @@ export class ManagerDraftsService implements OnModuleInit {
     if (status === 'locked' && (!Number.isFinite(reportPrice) || Number(reportPrice) <= 0)) {
       return { ok: false, error: 'A valid report price is required before locking.' }
     }
+
+    // Produce and persist the exact approved report before changing its state
+    // to locked. If rendering/storage fails, the report remains reviewable.
+    let finalReport: { objectKey: string; name: string } | null = null
+    if (status === 'locked') {
+      const approvedHtml = reportHtml ?? String(existing.report_html ?? '')
+      if (!approvedHtml.trim()) return { ok: false, error: 'The report is empty and cannot be finalized.' }
+      const pdf = await this.pdf.render(approvedHtml, p, 'final', authorization)
+      const name = `Final-Valuation-Report-${p}.pdf`
+      const stored = await this.storage.storeBuffer(pdf, name, 'application/pdf', `final-reports/${p}`)
+      finalReport = { objectKey: stored.objectKey, name }
+    }
     if (reportHtml != null) {
       await this.db.query(
         `INSERT INTO drafts (project_id, data, review_status, reject_reason)
@@ -313,7 +333,13 @@ export class ManagerDraftsService implements OnModuleInit {
       )
     }
     if (status === 'locked') {
-      await this.db.query(`UPDATE drafts SET report_price = $2 WHERE project_id = $1`, [p, reportPrice])
+      await this.db.query(
+        `UPDATE drafts SET report_price = $2, final_report_object_key = $3,
+                           final_report_name = $4, final_report_mime = 'application/pdf',
+                           final_report_generated_at = now()
+          WHERE project_id = $1`,
+        [p, reportPrice, finalReport!.objectKey, finalReport!.name],
+      )
     }
     if (status !== currentStatus) {
       await this.db.query(

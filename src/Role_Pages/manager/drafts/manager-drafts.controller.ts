@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common'
+import { Body, Controller, Get, Headers, Post, Query } from '@nestjs/common'
 import { ManagerDraftsService } from './manager-drafts.service'
 import { DraftActionDto } from './dto/action.dto'
 import { CurrentUser } from '../../../Home_Pages/auth/decorators/current-user.decorator'
@@ -22,8 +22,8 @@ export class ManagerDraftsController {
 
   // POST /api/manager/drafts/action
   @Post('action')
-  async action(@CurrentUser() user: AuthUser, @Body() dto: DraftActionDto) {
-    return this.service.action(user, dto.projectId, dto.reportHtml, dto.status, dto.reason ?? '', dto.valuationDate, dto.reportPrice)
+  async action(@CurrentUser() user: AuthUser, @Body() dto: DraftActionDto, @Headers('authorization') authorization: string) {
+    return this.service.action(user, dto.projectId, dto.reportHtml, dto.status, dto.reason ?? '', dto.valuationDate, dto.reportPrice, authorization ?? '')
   }
 
   // Manager-authorized access to the one canonical saved report representation.

@@ -57,6 +57,16 @@ export class ObjectStorageService {
     return { objectKey, databaseFallback: file.buffer }
   }
 
+  // Store a server-generated artifact (for example, a finalized PDF) using
+  // the same private bucket/local fallback policy as uploaded files.
+  async storeBuffer(buffer: Buffer, fileName: string, mimeType: string, area: string): Promise<StoredUpload> {
+    return this.store({
+      buffer,
+      originalname: fileName,
+      mimetype: mimeType,
+    } as Express.Multer.File, area)
+  }
+
   async read(objectKey?: string | null): Promise<Buffer | null> {
     if (!objectKey) return null
     if (objectKey.startsWith('local/')) {

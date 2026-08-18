@@ -2,13 +2,14 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import puppeteer from 'puppeteer'
 import { existsSync } from 'fs'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
+import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
 import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 type PdfKind = 'draft' | 'final'
 
 @Injectable()
 export class PdfReportService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService, private readonly storage: ObjectStorageService) {}
 
   private async browserPath() {
     const configured = process.env.PDF_CHROME_PATH?.trim()
@@ -31,6 +32,7 @@ export class PdfReportService {
     const result = await this.db.query(
       `SELECT d.data->>'reportHtml' AS report_html, d.review_status,
               COALESCE(d.paid, false) AS paid,
+              COALESCE(d.final_report_object_key, '') AS final_report_object_key,
               EXISTS (
                 SELECT 1 FROM valuations v
                  WHERE v.project_id = d.project_id AND v.technical_officer_id = $2
@@ -54,6 +56,11 @@ export class PdfReportService {
       if (user.role !== 'Manager L1' && !requestingBank) {
         throw new ForbiddenException('Only Manager L1 or the requesting bank with confirmed payment can download the finalized PDF.')
       }
+      if (row.final_report_object_key) {
+        const stored = await this.storage.read(String(row.final_report_object_key))
+        if (stored) return stored
+        throw new NotFoundException('The finalized PDF could not be found in object storage.')
+      }
     } else {
       if (locked) throw new ForbiddenException('Use the finalized PDF for a locked report.')
       const manager = user.role.startsWith('Manager L')
@@ -61,7 +68,13 @@ export class PdfReportService {
       if (!manager && !assignedOfficer) throw new ForbiddenException('You do not have access to this draft PDF.')
     }
 
-    const reportHtml = String(row.report_html)
+    return this.render(String(row.report_html), id, kind, authorization)
+  }
+
+  // Render the exact approved HTML into a PDF. Manager L1 uses this before
+  // locking so the immutable artifact can be persisted in object storage.
+  async render(reportHtml: string, projectId: string, kind: PdfKind, authorization = '') {
+    const id = projectId.trim()
     const origin = `http://127.0.0.1:${process.env.PORT ?? 4000}`
     const watermark = kind === 'draft'
       ? '<div class="draft-watermark">DRAFT – FOR REVIEW</div>'

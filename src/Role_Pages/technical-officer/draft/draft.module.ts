@@ -8,5 +8,6 @@ import { PdfReportService } from './pdf-report.service'
 @Module({
   controllers: [DraftController],
   providers: [DraftService, DocxReportService, PdfReportService],
+  exports: [PdfReportService],
 })
 export class DraftModule {}
