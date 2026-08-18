@@ -117,17 +117,31 @@ export class ManagerDraftsService implements OnModuleInit {
     }
     // Never trust a query-string level for authorization or filtering.
     const level = user.role === 'Manager L1' ? 'L1' : user.role === 'Manager L2' ? 'L2' : user.role === 'Manager L3' ? 'L3' : requestedLevel
+    const actorRole = `Manager ${level}`
     const r = await this.db.query(
       `SELECT v.project_id, v.valuation_id, v.status, v.technical_officer_id,
               p.owner_name_as_per_deed, p.village_town, p.district,
               u.first_name, u.last_name,
               COALESCE(d.review_status, 'draft') AS review_status, COALESCE(d.reject_reason,'') AS reject_reason,
-              d.created_at AS updated_at
+              d.created_at AS updated_at,
+              previous_return.reason AS previous_return_reason,
+              previous_return.created_at AS previous_returned_at
          FROM valuations v
          JOIN projects p ON p.project_id = v.project_id
          LEFT JOIN users u ON u.user_id = p.applicant_nic
          LEFT JOIN drafts d ON d.project_id = v.project_id
+         LEFT JOIN LATERAL (
+           SELECT a.reason, a.created_at
+             FROM manager_review_activities a
+            WHERE a.project_id = v.project_id
+              AND a.actor_role = $1
+              AND a.action = 'rejected'
+              AND a.created_at <= d.created_at
+            ORDER BY a.created_at DESC, a.id DESC
+            LIMIT 1
+         ) previous_return ON true
         ORDER BY d.created_at DESC NULLS LAST, v.project_id DESC, v.valuation_id`,
+      [actorRole],
     )
 
     const map = new Map<string, Row>()
@@ -141,6 +155,9 @@ export class ManagerDraftsService implements OnModuleInit {
           reviewStatus: x.review_status,
           rejectReason: x.reject_reason,
           updatedAt: x.updated_at ? new Date(x.updated_at).toISOString() : '',
+          reviewType: x.previous_returned_at ? 'recheck' : 'new',
+          previousReturnReason: String(x.previous_return_reason ?? ''),
+          previousReturnedAt: x.previous_returned_at ? new Date(x.previous_returned_at).toISOString() : '',
           valuations: [],
         })
       }
@@ -156,14 +173,31 @@ export class ManagerDraftsService implements OnModuleInit {
     const CORRECTIONS: Record<string, string> = { L3: 'rejected_l3', L2: 'rejected_l2' }
     let list = Array.from(map.values())
     if (view === 'approved' || view === 'rejected') {
-      const actorRole = `Manager ${level}`
-      const history = await this.db.query(
-        `SELECT project_id, MAX(created_at) AS action_at
-           FROM manager_review_activities
-          WHERE actor_role = $1 AND action = $2
-          GROUP BY project_id`,
-        [actorRole, view === 'approved' ? 'approved' : 'rejected'],
-      )
+      const history = view === 'approved'
+        ? await this.db.query(
+          `SELECT project_id, MAX(created_at) AS action_at
+             FROM manager_review_activities
+            WHERE actor_role = $1 AND action = 'approved'
+            GROUP BY project_id`,
+          [actorRole],
+        )
+        : await this.db.query(
+          `SELECT rejected.project_id, rejected.action_at
+             FROM (
+               SELECT project_id, MAX(created_at) AS action_at
+                 FROM manager_review_activities
+                WHERE actor_role = $1 AND action = 'rejected'
+                GROUP BY project_id
+             ) rejected
+            WHERE NOT EXISTS (
+              SELECT 1 FROM manager_review_activities approved
+               WHERE approved.project_id = rejected.project_id
+                 AND approved.actor_role = $1
+                 AND approved.action = 'approved'
+                 AND approved.created_at > rejected.action_at
+            )`,
+          [actorRole],
+        )
       const actionAt = new Map((history.rows as Row[]).map((row) => [
         String(row.project_id),
         row.action_at ? new Date(row.action_at).toISOString() : '',
