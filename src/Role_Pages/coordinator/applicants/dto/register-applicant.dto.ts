@@ -1,5 +1,5 @@
 import { IsEmail, IsISO8601, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator'
-import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, NIC_MESSAGE, NIC_PATTERN, PHONE_MESSAGE, POSTAL_CODE_MESSAGE, POSTAL_CODE_PATTERN, REQUIRED_PHONE_PATTERN, STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_PATTERN } from '../../../../Common_Pages/validation/patterns'
+import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, NIC_MESSAGE, NIC_PATTERN, PHONE_MESSAGE, POSTAL_CODE_MESSAGE, POSTAL_CODE_PATTERN, REQUIRED_PHONE_PATTERN } from '../../../../Common_Pages/validation/patterns'
 
 export class RegisterApplicantDto {
   @IsString() @MinLength(2, { message: 'First name must be at least 2 characters.' }) @MaxLength(60)
@@ -25,9 +25,6 @@ export class RegisterApplicantDto {
   @IsEmail({}, { message: 'Enter a valid email address.' }) @MaxLength(100) email: string
 
   @Matches(REQUIRED_PHONE_PATTERN, { message: PHONE_MESSAGE }) phone: string
-
-  @IsString() @MaxLength(100)
-  @Matches(STRONG_PASSWORD_PATTERN, { message: STRONG_PASSWORD_MESSAGE }) password: string
 
   @IsOptional() @IsString() @MaxLength(60) province?: string
   @IsOptional() @IsString() @MaxLength(60) district?: string
