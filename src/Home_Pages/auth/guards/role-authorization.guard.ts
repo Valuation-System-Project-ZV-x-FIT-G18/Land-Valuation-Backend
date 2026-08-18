@@ -3,7 +3,7 @@ import type { AuthUser } from '../types/auth-user'
 
 const allowedForPath = (path: string, role: string) => {
   if (path.startsWith('/api/technical-officer/draft/pdf')) {
-    return role === 'Technical Officer' || role.startsWith('Manager L')
+    return role === 'Technical Officer' || role.startsWith('Manager L') || role === 'Bank'
   }
   if (path.startsWith('/api/technical-officer/site-photos/file')) {
     return role === 'Technical Officer' || role.startsWith('Manager L')

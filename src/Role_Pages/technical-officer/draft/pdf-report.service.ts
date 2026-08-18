@@ -30,10 +30,16 @@ export class PdfReportService {
     const id = projectId.trim()
     const result = await this.db.query(
       `SELECT d.data->>'reportHtml' AS report_html, d.review_status,
+              COALESCE(d.paid, false) AS paid,
               EXISTS (
                 SELECT 1 FROM valuations v
                  WHERE v.project_id = d.project_id AND v.technical_officer_id = $2
-              ) AS assigned_to_officer
+              ) AS assigned_to_officer,
+              EXISTS (
+                SELECT 1 FROM valuations v
+                 WHERE v.project_id = d.project_id
+                   AND v.details->>'bankBranchCode' = $2
+              ) AS linked_to_bank
          FROM drafts d WHERE d.project_id = $1`,
       [id, user.userId],
     )
@@ -44,7 +50,10 @@ export class PdfReportService {
     const locked = status === 'locked'
     if (kind === 'final') {
       if (!locked) throw new ForbiddenException('The final PDF is available only after the report is locked.')
-      if (user.role !== 'Manager L1') throw new ForbiddenException('Only Manager L1 can download the finalized PDF.')
+      const requestingBank = user.role === 'Bank' && Boolean(row.linked_to_bank) && Boolean(row.paid)
+      if (user.role !== 'Manager L1' && !requestingBank) {
+        throw new ForbiddenException('Only Manager L1 or the requesting bank with confirmed payment can download the finalized PDF.')
+      }
     } else {
       if (locked) throw new ForbiddenException('Use the finalized PDF for a locked report.')
       const manager = user.role.startsWith('Manager L')

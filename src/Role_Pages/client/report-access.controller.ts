@@ -65,6 +65,12 @@ export class ReportAccessController {
     return { projects: await this.service.bankProjects(bankId ?? '') }
   }
 
+  // The requesting bank may read only its own paid, finalized report.
+  @Get('bank/report')
+  async bankReport(@CurrentUser() user: AuthUser, @Query('projectId') projectId: string) {
+    return this.service.bankReport(user, projectId ?? '')
+  }
+
   // Authenticated operational overview for Bank and Loan Applicant dashboards.
   @Get('dashboard/projects')
   async dashboardProjects(@CurrentUser() user: AuthUser) {

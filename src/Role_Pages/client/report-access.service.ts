@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../Common_Pages/notifications/notifications.service'
@@ -149,6 +149,34 @@ export class ReportAccessService implements OnModuleInit {
       [(bankUserId ?? '').trim()],
     )
     return r.rows.map((x: Row) => this.shape(x))
+  }
+
+  async bankReport(user: AuthUser, projectId: string) {
+    if (user.role !== 'Bank') throw new ForbiddenException('Only the requesting bank can view this report.')
+    const id = (projectId ?? '').trim()
+    const result = await this.db.query(
+      `SELECT d.data->>'reportHtml' AS report_html, d.review_status, d.paid, d.paid_at
+         FROM drafts d
+        WHERE d.project_id = $1
+          AND EXISTS (
+            SELECT 1 FROM valuations linked
+             WHERE linked.project_id = d.project_id
+               AND linked.details->>'bankBranchCode' = $2
+          )`,
+      [id, user.userId],
+    )
+    const report = result.rows[0] as Row | undefined
+    if (!report) throw new NotFoundException('Report not found for this bank account.')
+    if (report.review_status !== 'locked' || !report.paid) {
+      throw new ForbiddenException('The report is available only after finalization and confirmed payment.')
+    }
+    if (!String(report.report_html ?? '').trim()) throw new NotFoundException('Saved report content not found.')
+    return {
+      projectId: id,
+      reportHtml: String(report.report_html),
+      status: 'locked',
+      paidAt: report.paid_at ? new Date(report.paid_at).toISOString() : null,
+    }
   }
 
   async dashboardProjects(user: AuthUser) {
