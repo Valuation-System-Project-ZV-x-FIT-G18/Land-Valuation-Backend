@@ -17,6 +17,11 @@ export class DatabaseService implements OnModuleDestroy {
     this.pool = new Pool({
       connectionString,
       ssl: isLocal ? false : { rejectUnauthorized: false },
+      // Do not let application startup hang forever when the cloud database is
+      // asleep or temporarily unreachable. Callers can report/retry the error.
+      connectionTimeoutMillis: 10_000,
+      statement_timeout: 10_000,
+      query_timeout: 12_000,
     })
     // Idle cloud connections (e.g. Neon) get dropped; the pool emits an 'error'
     // event for that. Without a listener, Node treats it as uncaught and crashes.
