@@ -130,6 +130,9 @@ export class DraftService implements OnModuleInit {
     }
 
     return {
+      // Preserve every saved inspection field under its form key so the live
+      // builder and regenerated report use the same complete inspection data.
+      ...Object.fromEntries(Object.entries(insp).map(([key, value]) => [key, String(value ?? '')])),
       projectId: id,
       landName: f('landTraditionalName', 'land_traditional_name'),
       ownerName,
@@ -236,6 +239,14 @@ export class DraftService implements OnModuleInit {
       accessRoadWidth: String(insp.roadWidth ?? ''),
       accessRoadSurface: String(insp.roadType ?? ''),
       legalRightOfWay: String(insp.rightOfWay ?? '') || f('rightOfWayAvailable', 'right_of_way_available'),
+      landShape: String(insp.landShape ?? ''),
+      landPosition: String(insp.landPosition ?? ''),
+      frontage: String(insp.frontage ?? ''),
+      floodProne: String(insp.floodProne ?? ''),
+      soilType: String(insp.soilType ?? ''),
+      drainage: String(insp.drainage ?? ''),
+      gateType: String(insp.gateType ?? ''),
+      unauthorizedStructures: String(insp.unauthorizedStructures ?? ''),
       satelliteLocationImage,
       locationMapImage,
       // Narrative descriptions
