@@ -83,6 +83,15 @@ export class DraftService implements OnModuleInit {
     const calc = (la.calculation ?? {}) as Row
     const propertyAddress = [f('propertyNumber', 'property_number'), f('streetName', 'street_name'), f('villageTown', 'village_town'), f('district', 'district')].filter(Boolean).join(', ')
     const extentsTally = f('extentsTally', 'extents_tally').trim().toLowerCase()
+    const localityFacilities = desc.localityFacilities || desc.localityDescription || map.locality_description || [
+      insp.vicinityCharacter && `The subject property is situated in a ${String(insp.vicinityCharacter).toLowerCase()} locality.`,
+      insp.nearbyFacilities && `Nearby facilities include ${String(insp.nearbyFacilities).replace(/[.]+$/, '')}.`,
+      insp.transportFrequency && `Public transport availability is ${String(insp.transportFrequency).toLowerCase()}.`,
+      insp.dayToDayNeeds && `Day-to-day requirements are ${String(insp.dayToDayNeeds).toLowerCase()}.`,
+    ].filter(Boolean).join(' ')
+    const conclusion = desc.conclusion || la.conclusion?.text || (calc.marketValue
+      ? `Having considered the location, physical characteristics, available comparable evidence and prevailing market conditions, and applying the Direct Comparison Method, the current Market Value of the subject property is concluded at Rs. ${Number(calc.marketValue).toLocaleString('en-US')} /-.`
+      : '')
     const extentVerificationStatement = ['yes', 'true', 'tally', 'tallies'].includes(extentsTally)
       ? 'The extent mentioned in the above survey plan tallies with the above deed.'
       : ['no', 'false', 'do not tally', 'does not tally'].includes(extentsTally)
@@ -274,7 +283,7 @@ export class DraftService implements OnModuleInit {
       distFromMainRoad: f('distFromMainRoad', 'dist_from_main_road'),
       distFromByRoad: f('distFromByRoad', 'dist_from_by_road'),
       rentControlRegulation: desc.rentControlRegulation ?? '',
-      localityFacilities: desc.localityFacilities || desc.localityDescription || '',
+      localityFacilities,
       certification: desc.certification ?? '',
       nearbyPropertyDetails: la.evidence?.marketSurveyStatement ?? '',
       comparable1Reference: comparableValue(0, 'refNo'),
@@ -316,7 +325,7 @@ export class DraftService implements OnModuleInit {
         calc.ratePerPerch
           ? `${calc.totalExtentPerches ?? ''} Perches @ Rs. ${Number(calc.ratePerPerch).toLocaleString('en-US')}/- per perch = Rs. ${Number(calc.marketValue ?? 0).toLocaleString('en-US')}/-.`
           : '',
-      conclusion: desc.conclusion ?? '',
+      conclusion,
       valuerName: String(valuer.valuer_name ?? ''),
       valuerProfessionalQualifications: String(valuer.professional_qualifications ?? ''),
       valuerIvslNumber: String(valuer.ivsl_registration_number ?? ''),
