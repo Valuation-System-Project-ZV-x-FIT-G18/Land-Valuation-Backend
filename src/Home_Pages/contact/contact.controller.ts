@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common'
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common'
 import { ContactService } from './contact.service'
 import { CreateContactDto } from './dto/create-contact.dto'
 import { Public } from '../auth/decorators/public.decorator'
@@ -20,5 +20,10 @@ export class ContactController {
   @Get()
   async list() {
     return { messages: await this.contactService.list() }
+  }
+
+  @Patch(':id/status')
+  async updateStatus(@Param('id') id: string, @Body() body: { status?: string }) {
+    return { ok: true, message: await this.contactService.updateStatus(Number(id), body.status ?? '') }
   }
 }

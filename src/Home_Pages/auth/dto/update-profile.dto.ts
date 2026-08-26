@@ -8,8 +8,6 @@ export class UpdateProfileDto {
   @IsOptional() @IsString() @MaxLength(60)
   @Matches(NAME_PATTERN, { message: NAME_MESSAGE }) lastName?: string
 
-  @IsOptional() @IsString() @MaxLength(60) initials?: string
-
   @IsOptional()
   @IsEmail({}, { message: 'Please enter a valid email address.' })
   @MaxLength(100)

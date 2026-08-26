@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
@@ -16,7 +16,7 @@ type Body = {
 type Files = Record<string, Express.Multer.File[]>
 
 @Injectable()
-export class ProjectsService implements OnModuleInit {
+export class ProjectsService {
   private readonly logger = new Logger(ProjectsService.name)
 
   constructor(
@@ -26,24 +26,7 @@ export class ProjectsService implements OnModuleInit {
     private readonly storage: ObjectStorageService,
   ) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS file_data BYTEA`)
-      await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS mime VARCHAR(100) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS size INTEGER NOT NULL DEFAULT 0`)
-      await this.db.query(`ALTER TABLE project_files ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
-    } catch (err) {
-      this.logger.error(`Could not ensure project file storage: ${(err as Error).message}`)
-    }
 
-    for (const { column } of projectFieldColumns) {
-      try {
-        await this.db.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS "${column}" TEXT NOT NULL DEFAULT ''`)
-      } catch (err) {
-        this.logger.error(`Could not ensure column ${column}: ${(err as Error).message}`)
-      }
-    }
-  }
 
   async findByNicOrId(q: string) {
     const v = q.trim()
@@ -64,7 +47,11 @@ export class ProjectsService implements OnModuleInit {
   async listStatus(user: AuthUser, q: string) {
     const v = (q ?? '').trim()
     const cols = `p.project_id, p.applicant_nic, p.property_type, p.status, p.created_at,
-                  COALESCE(d.paid, false) AS paid`
+                  p.village_town, p.property_city, p.district,
+                  applicant.first_name, applicant.last_name,
+                  latest.status AS valuation_status, latest.technical_officer_id,
+                  COALESCE(d.paid, false) AS paid,
+                  (SELECT COUNT(*)::int FROM valuations v WHERE v.project_id = p.project_id) AS valuation_count`
     const params: string[] = []
     let access = 'true'
     if (user.role === 'Loan Applicant') {
@@ -95,7 +82,13 @@ export class ProjectsService implements OnModuleInit {
       limit = 'LIMIT 20'
     }
     const r = await this.db.query(
-      `SELECT ${cols} FROM projects p LEFT JOIN drafts d ON d.project_id = p.project_id
+      `SELECT ${cols} FROM projects p
+        LEFT JOIN drafts d ON d.project_id = p.project_id
+        LEFT JOIN users applicant ON applicant.user_id = p.applicant_nic
+        LEFT JOIN LATERAL (
+          SELECT status, technical_officer_id FROM valuations
+           WHERE project_id = p.project_id ORDER BY valuation_id DESC, id DESC LIMIT 1
+        ) latest ON true
         WHERE ${access} ${search} ORDER BY ${ranking} ${limit}`,
       params,
     )
@@ -105,15 +98,29 @@ export class ProjectsService implements OnModuleInit {
       propertyType: row.property_type as string,
       status: row.paid ? 'Valuation Completed' : (row.status as string),
       createdAt: row.created_at as string,
+      valuationCount: Number(row.valuation_count ?? 0),
+      applicantName: `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim(),
+      location: [row.village_town, row.property_city, row.district].filter(Boolean).join(', '),
+      valuationStatus: (row.valuation_status as string) || '',
+      technicalOfficerId: (row.technical_officer_id as string) || '',
     }))
   }
 
   async dashboardStatus() {
     const result = await this.db.query(
       `SELECT p.project_id, p.applicant_nic, p.property_type, p.status, p.created_at,
-              COALESCE(d.paid, false) AS paid
+              p.village_town, p.property_city, p.district,
+              applicant.first_name, applicant.last_name,
+              latest.status AS valuation_status, latest.technical_officer_id,
+              COALESCE(d.paid, false) AS paid,
+              (SELECT COUNT(*)::int FROM valuations v WHERE v.project_id = p.project_id) AS valuation_count
          FROM projects p
          LEFT JOIN drafts d ON d.project_id = p.project_id
+         LEFT JOIN users applicant ON applicant.user_id = p.applicant_nic
+         LEFT JOIN LATERAL (
+           SELECT status, technical_officer_id FROM valuations
+            WHERE project_id = p.project_id ORDER BY valuation_id DESC, id DESC LIMIT 1
+         ) latest ON true
         ORDER BY p.created_at DESC`,
     )
     return result.rows.map((row) => ({
@@ -122,6 +129,11 @@ export class ProjectsService implements OnModuleInit {
       propertyType: row.property_type as string,
       status: row.paid ? 'Valuation Completed' : (row.status as string),
       createdAt: row.created_at as string,
+      valuationCount: Number(row.valuation_count ?? 0),
+      applicantName: `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim(),
+      location: [row.village_town, row.property_city, row.district].filter(Boolean).join(', '),
+      valuationStatus: (row.valuation_status as string) || '',
+      technicalOfficerId: (row.technical_officer_id as string) || '',
     }))
   }
 

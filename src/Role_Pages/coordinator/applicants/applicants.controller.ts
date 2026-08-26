@@ -8,6 +8,13 @@ import { UpdateApplicantDto } from './dto/update-applicant.dto'
 export class ApplicantsController {
   constructor(private readonly applicantsService: ApplicantsService) {}
 
+  // GET /api/coordinator/applicants/list — the full applicant roster.
+  @Get('list')
+  async list() {
+    const applicants = await this.applicantsService.listAll()
+    return { applicants }
+  }
+
   // GET /api/coordinator/applicants/search?nic=...
   @Get('search')
   async search(@Query('nic') nic: string) {

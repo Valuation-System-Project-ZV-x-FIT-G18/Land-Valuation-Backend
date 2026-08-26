@@ -7,7 +7,13 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule)
 
   app.setGlobalPrefix('api') // every route starts with /api
-  app.enableCors() // allow the React frontend to call this API
+  // Only our own frontend may call this API from a browser. Without an origin
+  // list any website a signed-in user visits could issue requests as them.
+  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:3000')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+  app.enableCors({ origin: allowedOrigins, credentials: true })
 
   // Validate every incoming request body against its DTO automatically.
   app.useGlobalPipes(

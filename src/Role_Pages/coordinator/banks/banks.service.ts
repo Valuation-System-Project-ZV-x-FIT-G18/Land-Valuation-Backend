@@ -6,18 +6,23 @@ import { DatabaseService } from '../../../Common_Pages/database/database.service
 export class BanksService {
   constructor(private readonly db: DatabaseService) {}
 
-  // All bank accounts (created by the admin, stored on the users table) for the
-  // New Valuation bank/branch dropdowns.
   async registeredBanks() {
     const r = await this.db.query(
-      `SELECT bank_name, branch_name, user_id, first_name, last_name, phone, email, designation
-         FROM users WHERE role = 'Bank' ORDER BY bank_name, branch_name`,
+      `SELECT bank.name AS bank_name, branch.branch_name, branch.branch_code,
+              contact.full_name, contact.phone, contact.email, contact.designation
+         FROM bank_branches branch
+         JOIN bank_organizations bank ON bank.id = branch.bank_id
+         LEFT JOIN LATERAL (
+           SELECT full_name, phone, email, designation FROM bank_contacts
+            WHERE branch_id = branch.id ORDER BY id LIMIT 1
+         ) contact ON true
+        ORDER BY bank.name, branch.branch_name`,
     )
     return r.rows.map((u) => ({
-      bankName: (u.bank_name as string) || (u.first_name as string) || '—',
+      bankName: (u.bank_name as string) || '—',
       branchName: (u.branch_name as string) || '',
-      branchCode: u.user_id as string,
-      personName: `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim(),
+      branchCode: u.branch_code as string,
+      personName: (u.full_name as string) || '',
       designation: (u.designation as string) || '',
       contact: (u.phone as string) || '',
       email: (u.email as string) || '',

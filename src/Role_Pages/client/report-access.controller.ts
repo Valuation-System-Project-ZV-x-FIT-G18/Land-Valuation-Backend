@@ -22,8 +22,8 @@ export class ReportAccessController {
 
   // GET /api/client/applicant/projects?nic=...
   @Get('applicant/projects')
-  async applicantProjects(@Query('nic') nic: string) {
-    return { projects: await this.service.applicantProjects(nic ?? '') }
+  async applicantProjects(@CurrentUser() user: AuthUser) {
+    return { projects: await this.service.applicantProjects(user.userId) }
   }
 
   // POST /api/client/applicant/pay-slip (multipart)
@@ -34,8 +34,8 @@ export class ReportAccessController {
       limits: { fileSize: 5 * 1024 * 1024 },
     }),
   )
-  async paySlip(@Body() dto: PaySlipDto, @UploadedFile() file?: Express.Multer.File) {
-    return this.service.paySlip(dto.projectId, file)
+  async paySlip(@CurrentUser() user: AuthUser, @Body() dto: PaySlipDto, @UploadedFile() file?: Express.Multer.File) {
+    return this.service.paySlip(user.userId, dto.projectId, file)
   }
 
   // GET /api/client/pending-slips
@@ -47,7 +47,7 @@ export class ReportAccessController {
   // POST /api/client/verify-slip { projectId, approve }
   @Post('verify-slip')
   async verifySlip(@Body() dto: VerifySlipDto) {
-    return this.service.verifySlip(dto.projectId, dto.approve)
+    return this.service.verifySlip(dto.projectId, dto.approve, dto.reason)
   }
 
   // GET /api/client/slip?projectId=...
@@ -61,8 +61,8 @@ export class ReportAccessController {
 
   // GET /api/client/bank/projects?bankId=...
   @Get('bank/projects')
-  async bankProjects(@Query('bankId') bankId: string) {
-    return { projects: await this.service.bankProjects(bankId ?? '') }
+  async bankProjects(@CurrentUser() user: AuthUser) {
+    return { projects: await this.service.bankProjects(user.userId) }
   }
 
   // The requesting bank may read only its own paid, finalized report.

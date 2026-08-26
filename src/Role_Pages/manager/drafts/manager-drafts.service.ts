@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common'
+import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
@@ -16,7 +16,7 @@ type Row = Record<string, any>
 //  rejected_l2 -> L1 rejected, back to L2 to correct & resubmit
 //  locked      -> L1 locked (final, uneditable; visible to the bank once paid)
 @Injectable()
-export class ManagerDraftsService implements OnModuleInit {
+export class ManagerDraftsService {
   private readonly logger = new Logger(ManagerDraftsService.name)
 
   constructor(
@@ -27,91 +27,7 @@ export class ManagerDraftsService implements OnModuleInit {
     private readonly pdf: PdfReportService,
   ) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(`CREATE TABLE IF NOT EXISTS drafts (
-        id SERIAL PRIMARY KEY, project_id VARCHAR(20) NOT NULL UNIQUE,
-        data JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS review_status VARCHAR(20) NOT NULL DEFAULT 'draft'`)
-      // Widen for longer statuses like 'rejected_to_coordinator' (23 chars).
-      await this.db.query(`ALTER TABLE drafts ALTER COLUMN review_status TYPE VARCHAR(40)`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS reject_reason TEXT NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT false`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS report_price NUMERIC(14,2) NOT NULL DEFAULT 0`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS final_report_object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS final_report_name VARCHAR(255) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS final_report_mime VARCHAR(100) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS final_report_generated_at TIMESTAMPTZ`)
-      await this.db.query(`CREATE TABLE IF NOT EXISTS manager_review_activities (
-        id BIGSERIAL PRIMARY KEY,
-        project_id VARCHAR(20) NOT NULL,
-        from_status VARCHAR(40) NOT NULL DEFAULT '',
-        to_status VARCHAR(40) NOT NULL,
-        actor_user_id VARCHAR(100) NOT NULL DEFAULT '',
-        actor_role VARCHAR(40) NOT NULL,
-        reason TEXT NOT NULL DEFAULT '',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )`)
-      await this.db.query(`ALTER TABLE manager_review_activities
-        ADD COLUMN IF NOT EXISTS action VARCHAR(20) NOT NULL DEFAULT ''`)
-      await this.db.query(`UPDATE manager_review_activities SET action = CASE
-          WHEN to_status IN ('pending_l2', 'pending_l1', 'locked') THEN 'approved'
-          WHEN to_status IN ('rejected_to_to', 'rejected_l3', 'rejected_l2') THEN 'rejected'
-          ELSE 'updated'
-        END
-        WHERE action = ''`)
-      await this.db.query(`CREATE INDEX IF NOT EXISTS idx_manager_review_activities_created
-        ON manager_review_activities (created_at DESC)`)
-      // Preserve the latest known workflow change for reports created before
-      // the activity log existed. Future transitions are recorded individually.
-      await this.db.query(`INSERT INTO manager_review_activities
-          (project_id, action, from_status, to_status, actor_role, created_at)
-        SELECT d.project_id,
-          CASE
-            WHEN d.review_status IN ('pending_l2', 'pending_l1', 'locked') THEN 'approved'
-            ELSE 'rejected'
-          END,
-          '', d.review_status,
-          CASE d.review_status
-            WHEN 'pending_l2' THEN 'Manager L3'
-            WHEN 'rejected_to_to' THEN 'Manager L3'
-            WHEN 'pending_l1' THEN 'Manager L2'
-            WHEN 'rejected_l3' THEN 'Manager L2'
-            WHEN 'locked' THEN 'Manager L1'
-            WHEN 'rejected_l2' THEN 'Manager L1'
-            ELSE 'Manager'
-          END,
-          d.created_at
-        FROM drafts d
-        WHERE d.review_status IN ('pending_l2', 'rejected_to_to', 'pending_l1', 'rejected_l3', 'locked', 'rejected_l2')
-          AND NOT EXISTS (
-            SELECT 1 FROM manager_review_activities a WHERE a.project_id = d.project_id
-          )`)
-      // Reconstruct prerequisite approvals for reports that completed stages
-      // before the history table was introduced. The workflow is strictly
-      // L3 -> L2 -> L1, so these approvals are implied by the current state.
-      await this.db.query(`INSERT INTO manager_review_activities
-          (project_id, action, from_status, to_status, actor_role, created_at)
-        SELECT d.project_id, 'approved', 'pending_l3', 'pending_l2', 'Manager L3', d.created_at
-          FROM drafts d
-         WHERE d.review_status IN ('pending_l2', 'rejected_l3', 'pending_l1', 'rejected_l2', 'locked')
-           AND NOT EXISTS (
-             SELECT 1 FROM manager_review_activities a
-              WHERE a.project_id = d.project_id AND a.actor_role = 'Manager L3' AND a.action = 'approved'
-           )`)
-      await this.db.query(`INSERT INTO manager_review_activities
-          (project_id, action, from_status, to_status, actor_role, created_at)
-        SELECT d.project_id, 'approved', 'pending_l2', 'pending_l1', 'Manager L2', d.created_at
-          FROM drafts d
-         WHERE d.review_status IN ('pending_l1', 'rejected_l2', 'locked')
-           AND NOT EXISTS (
-             SELECT 1 FROM manager_review_activities a
-              WHERE a.project_id = d.project_id AND a.actor_role = 'Manager L2' AND a.action = 'approved'
-           )`)
-    } catch (err) {
-      this.logger.error(`Manager drafts setup failed: ${(err as Error).message}`)
-    }
-  }
+
 
   // All projects (with valuations + review status). `view` splits the lists:
   //  'check'       — drafts newly arrived at this level to review (pending_lX)
@@ -350,6 +266,24 @@ export class ManagerDraftsService implements OnModuleInit {
           p,
           ['pending_l2', 'pending_l1', 'locked'].includes(status) ? 'approved' : 'rejected',
           currentStatus,
+          status,
+          user.userId,
+          user.role,
+          reason,
+        ],
+      )
+    }
+    const snapshotHtml = String(reportHtml ?? existing.report_html ?? '')
+    if (snapshotHtml) {
+      await this.db.query(
+        `INSERT INTO draft_versions
+          (project_id, version_number, report_html, event, review_status, actor_user_id, actor_role, reason)
+         SELECT $1, COALESCE(MAX(version_number), 0) + 1, $2, $3, $4, $5, $6, $7
+           FROM draft_versions WHERE project_id = $1`,
+        [
+          p,
+          snapshotHtml,
+          ['pending_l2', 'pending_l1', 'locked'].includes(status) ? 'approved' : 'returned',
           status,
           user.userId,
           user.role,

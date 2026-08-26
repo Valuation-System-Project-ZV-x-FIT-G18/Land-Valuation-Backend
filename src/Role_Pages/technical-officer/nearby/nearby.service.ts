@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { AiService } from '../../../Common_Pages/ai/ai.service'
 import { extentToPerches, formatLKR, parseJsonLoose, rupeesInWords } from './report.util'
@@ -33,7 +33,7 @@ const TRENDS = ['going up steadily', 'staying the same', 'slowing down']
 
 
 @Injectable()
-export class NearbyService implements OnModuleInit {
+export class NearbyService {
   private readonly logger = new Logger(NearbyService.name)
 
   constructor(
@@ -41,15 +41,7 @@ export class NearbyService implements OnModuleInit {
     private readonly ai: AiService,
   ) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(`CREATE TABLE IF NOT EXISTS land_analyses (
-        id SERIAL PRIMARY KEY, project_id VARCHAR(20) NOT NULL UNIQUE,
-        data JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`)
-    } catch (err) {
-      this.logger.error(`Nearby setup failed: ${(err as Error).message}`)
-    }
-  }
+
 
   private async project(projectId: string): Promise<Row | null> {
     const r = await this.db.query(`SELECT * FROM projects WHERE project_id = $1`, [projectId.trim()])
@@ -381,7 +373,11 @@ export class NearbyService implements OnModuleInit {
       }
     }
     const marketValue = Math.round(extent * rate)
-    const pct = Number(input.forcedSalePct) || 80
+    const requestedPct = input.forcedSalePct == null ? 80 : Number(input.forcedSalePct)
+    if (!Number.isFinite(requestedPct) || requestedPct < 1 || requestedPct > 100) {
+      return { error: 'Forced sale percentage must be between 1% and 100%.' }
+    }
+    const pct = requestedPct
     const forcedSaleValue = Math.round((marketValue * pct) / 100)
     const trend = input.marketTrend || 'staying the same'
     const prev = input.previouslyValued || 'not valued'

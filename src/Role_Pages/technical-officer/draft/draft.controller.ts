@@ -14,15 +14,17 @@ export class DraftController {
 
   // GET /build?projectId=...
   @Get('build')
-  async build(@Query('projectId') projectId: string) {
+  async build(@Query('projectId') projectId: string, @CurrentUser() user: AuthUser) {
+    await this.draft.assertAssigned(projectId ?? '', user)
     const res = await this.draft.buildValues(projectId ?? '')
     return res ?? { error: 'Project not found.' }
   }
 
   // GET /word?projectId=... — editable DOCX generated from the canonical template.
   @Get('word')
-  async word(@Query('projectId') projectId: string, @Res() res: Response) {
+  async word(@Query('projectId') projectId: string, @CurrentUser() user: AuthUser, @Res() res: Response) {
     const id = (projectId ?? '').trim()
+    await this.draft.assertAssigned(id, user)
     const file = await this.docx.generate(id)
     if (!file) { res.status(404).json({ error: 'Project not found.' }); return }
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
@@ -49,13 +51,25 @@ export class DraftController {
 
   // GET ?projectId=...
   @Get()
-  async get(@Query('projectId') projectId: string) {
+  async get(@Query('projectId') projectId: string, @CurrentUser() user: AuthUser) {
+    await this.draft.assertAssigned(projectId ?? '', user)
     return { data: await this.draft.get(projectId ?? '') }
   }
 
   // POST { projectId, data }
   @Post()
-  async save(@Body() dto: SaveDraftDto) {
-    return this.draft.save(dto.projectId, dto.data)
+  async save(@Body() dto: SaveDraftDto, @CurrentUser() user: AuthUser) {
+    return this.draft.save(dto.projectId, dto.data, user)
+  }
+
+  @Get('history')
+  async history(@Query('projectId') projectId: string, @CurrentUser() user: AuthUser) {
+    await this.draft.assertAssigned(projectId ?? '', user)
+    return { versions: await this.draft.history(projectId ?? '') }
+  }
+
+  @Post('autosave')
+  async autosave(@Body() dto: SaveDraftDto, @CurrentUser() user: AuthUser) {
+    return this.draft.autosave(dto.projectId, dto.data, user)
   }
 }

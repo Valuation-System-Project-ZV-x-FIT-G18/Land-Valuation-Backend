@@ -1,31 +1,14 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../database/database.service'
 
 // In-site notifications shown on the bell icon in the top bar.
 @Injectable()
-export class NotificationsService implements OnModuleInit {
+export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name)
 
   constructor(private readonly db: DatabaseService) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(
-        `CREATE TABLE IF NOT EXISTS notifications (
-           id         SERIAL PRIMARY KEY,
-           user_id    VARCHAR(20) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-           message    TEXT        NOT NULL,
-           read       BOOLEAN     NOT NULL DEFAULT false,
-           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-         )`,
-      )
-      await this.db.query(
-        `CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications (user_id)`,
-      )
-    } catch (err) {
-      this.logger.error(`Notifications setup failed: ${(err as Error).message}`)
-    }
-  }
+
 
   // Add a notification for a user. Never throws (must not fail its caller).
   async create(userId: string, message: string) {

@@ -1,5 +1,5 @@
 import { IsEmail, IsIn, IsISO8601, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator'
-import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, NIC_MESSAGE, NIC_PATTERN, PHONE_MESSAGE, PHONE_PATTERN, POSTAL_CODE_MESSAGE, POSTAL_CODE_PATTERN, STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_PATTERN } from '../../../Common_Pages/validation/patterns'
+import { CITY_MESSAGE, CITY_PATTERN, NAME_MESSAGE, NAME_PATTERN, NIC_MESSAGE, NIC_PATTERN, PHONE_MESSAGE, PHONE_PATTERN, POSTAL_CODE_MESSAGE, POSTAL_CODE_PATTERN } from '../../../Common_Pages/validation/patterns'
 
 export const STAFF_ROLES = [
   'Admin', 'Coordinator', 'Technical Officer',
@@ -15,8 +15,6 @@ export class CreateRoleDto {
   @IsString() @MinLength(1, { message: 'Last name is required.' }) @MaxLength(60)
   @Matches(NAME_PATTERN, { message: NAME_MESSAGE }) lastName: string
 
-  @IsOptional() @IsString() @MaxLength(60) initials?: string
-
   @Matches(NIC_PATTERN, { message: NIC_MESSAGE }) nic: string
 
   @IsEmail({}, { message: 'Enter a valid email address.' }) @MaxLength(100) email: string
@@ -29,9 +27,6 @@ export class CreateRoleDto {
   @IsOptional() @IsString() @MaxLength(100) branchName?: string
   @IsOptional() @IsString() @MaxLength(100) bankName?: string
   @IsOptional() @IsString() @MaxLength(100) designation?: string
-
-  @IsString() @MaxLength(100)
-  @Matches(STRONG_PASSWORD_PATTERN, { message: STRONG_PASSWORD_MESSAGE }) password: string
 
   // @IsOptional() only skips null/undefined, not '' — Bank accounts submit an
   // empty string (the Date of Birth field is hidden for that role), so use

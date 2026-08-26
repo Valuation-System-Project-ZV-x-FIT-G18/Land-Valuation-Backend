@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common'
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { MailService } from '../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../Common_Pages/notifications/notifications.service'
@@ -48,7 +48,7 @@ export function computeFee(marketValue: number) {
 // Report access for external clients: a loan applicant pays for a locked report,
 // after which the requesting bank can view it.
 @Injectable()
-export class ReportAccessService implements OnModuleInit {
+export class ReportAccessService {
   private readonly logger = new Logger(ReportAccessService.name)
 
   constructor(
@@ -97,24 +97,7 @@ export class ReportAccessService implements OnModuleInit {
     }
   }
 
-  async onModuleInit() {
-    try {
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT false`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS payment_ref VARCHAR(60) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS payment_method VARCHAR(20) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_path VARCHAR(255) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_name VARCHAR(255) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_mime VARCHAR(100) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_data BYTEA`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
-      // A slip payment waits here until a coordinator verifies it.
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slip_pending BOOLEAN NOT NULL DEFAULT false`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS report_price NUMERIC(14,2) NOT NULL DEFAULT 0`)
-    } catch (err) {
-      this.logger.error(`Report access setup failed: ${(err as Error).message}`)
-    }
-  }
+
 
   // Locked reports for a loan applicant (their own projects) + payment state.
   async applicantProjects(nic: string) {
@@ -251,7 +234,7 @@ export class ReportAccessService implements OnModuleInit {
 
   // Manual bank payment — store the slip and mark it PENDING coordinator
   // verification (not paid yet). It shows as paid only after verify().
-  async paySlip(projectId: string, file?: Express.Multer.File) {
+  async paySlip(applicantId: string, projectId: string, file?: Express.Multer.File) {
     const p = (projectId ?? '').trim()
     if (!p) return { ok: false, error: 'Missing project.' }
     if (!file) return { ok: false, error: 'Please attach the payment slip.' }
@@ -259,8 +242,9 @@ export class ReportAccessService implements OnModuleInit {
     const r = await this.db.query(
       `UPDATE drafts SET payment_method = 'bank_slip', slip_path = '', slip_name = $2,
                          slip_mime = $3, slip_data = $4, slip_object_key = $5, slip_pending = true
-        WHERE project_id = $1 AND review_status = 'locked' AND paid = false`,
-      [p, file.originalname, file.mimetype, stored.databaseFallback, stored.objectKey],
+        WHERE project_id = $1 AND review_status = 'locked' AND paid = false
+          AND EXISTS (SELECT 1 FROM projects p WHERE p.project_id = drafts.project_id AND p.applicant_nic = $6)`,
+      [p, file.originalname, file.mimetype, stored.databaseFallback, stored.objectKey, applicantId],
     )
     if (r.rowCount === 0) return { ok: false, error: 'Report is not available for payment yet.' }
     await this.notifySlipSubmitted(p)
@@ -310,7 +294,7 @@ export class ReportAccessService implements OnModuleInit {
   }
 
   // Coordinator verifies (approve → paid) or rejects (clear the slip) a payment.
-  async verifySlip(projectId: string, approve: boolean) {
+  async verifySlip(projectId: string, approve: boolean, rejectionReason = '') {
     const p = (projectId ?? '').trim()
     if (!p) return { ok: false, error: 'Missing project.' }
     if (approve) {
@@ -323,20 +307,22 @@ export class ReportAccessService implements OnModuleInit {
       if (!r.rowCount) return { ok: false, error: 'No pending payment slip was found.' }
       await this.notifyPaid(p)
     } else {
+      const reason = rejectionReason.trim()
+      if (reason.length < 3) return { ok: false, error: 'A rejection reason is required.' }
       const r = await this.db.query(
         `UPDATE drafts SET slip_pending = false, slip_path = '', slip_name = '', slip_mime = '', slip_data = NULL, slip_object_key = '', payment_method = ''
           WHERE project_id = $1 AND slip_pending = true`,
         [p],
       )
       if (!r.rowCount) return { ok: false, error: 'No pending payment slip was found.' }
-      await this.notifyPaymentRejected(p)
+      await this.notifyPaymentRejected(p, reason)
     }
     return { ok: true }
   }
 
   // Tell the applicant and requesting bank that a submitted payment was not
   // accepted, so the applicant knows to submit a new payment/slip.
-  private async notifyPaymentRejected(projectId: string) {
+  private async notifyPaymentRejected(projectId: string, reason: string) {
     try {
       const proj = (await this.db.query(
         `SELECT applicant_nic, bank_email FROM projects WHERE project_id = $1`,
@@ -346,7 +332,7 @@ export class ReportAccessService implements OnModuleInit {
       if (nic) {
         await this.notifications.create(
           nic,
-          `Your payment slip for project ${projectId} was rejected. Please check the payment details and submit a new slip.`,
+          `Your payment slip for project ${projectId} was rejected. Reason: ${reason}. Please correct it and submit a new slip.`,
         )
       }
       const bankEmail = (proj?.bank_email as string) ?? ''
@@ -355,7 +341,7 @@ export class ReportAccessService implements OnModuleInit {
         if (bankUserId) {
           await this.notifications.create(
             bankUserId,
-            `The payment submitted for project ${projectId} was rejected and is awaiting resubmission by the applicant.`,
+            `The payment submitted for project ${projectId} was rejected (${reason}) and is awaiting resubmission by the applicant.`,
           )
         }
       }

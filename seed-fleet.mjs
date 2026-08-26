@@ -3,6 +3,7 @@
 // Run once:  node seed-fleet.mjs
 import { readFileSync } from 'fs'
 import pg from 'pg'
+import bcrypt from 'bcryptjs'
 
 // Read DATABASE_URL from .env (simple parse, no extra deps).
 const env = readFileSync(new URL('./.env', import.meta.url), 'utf8')
@@ -21,20 +22,29 @@ const pool = new pg.Pool({
 const firstNames = ['Nuwan', 'Sandun', 'Ishara', 'Tharindu', 'Chamara', 'Dinesh', 'Ruwan', 'Kavindu', 'Lahiru', 'Saman', 'Nadeesha', 'Amila', 'Buddhika', 'Charith', 'Dilan', 'Eranga', 'Gayan', 'Harsha', 'Isuru', 'Janith']
 const lastNames = ['Perera', 'Fernando', 'Silva', 'Jayasuriya', 'Bandara', 'Wickramasinghe', 'Gunawardena', 'Rathnayake', 'Dissanayake', 'Herath', 'Wijesinghe', 'Kumara', 'Peiris', 'Senanayake', 'Ekanayake', 'Madushanka', 'Rajapaksa', 'Weerasinghe', 'Alwis', 'Cooray']
 const districts = ['Colombo', 'Gampaha', 'Kalutara', 'Kandy', 'Galle', 'Matara', 'Jaffna', 'Kurunegala', 'Anuradhapura', 'Ratnapura']
-
 async function main() {
+  const passwordHash = await bcrypt.hash('Test@123', 10)
   // 20 technical officers: TO101..TO120.
   for (let i = 0; i < 20; i++) {
     const id = `TO${101 + i}`
     const nic = String(199000000001 + i) // 12-digit NIC
     const phone = `07${String(10000000 + i)}` // 10-digit phone
     await pool.query(
-      `INSERT INTO users (user_id, first_name, last_name, nic, role, district, phone, email)
-       VALUES ($1, $2, $3, $4, 'Technical Officer', $5, $6, $7)
+      `INSERT INTO users (user_id, first_name, last_name, nic, role, district, phone, email, password_hash)
+       VALUES ($1, $2, $3, $4, 'Technical Officer', $5, $6, $7, $8)
        ON CONFLICT (user_id) DO NOTHING`,
-      [id, firstNames[i], lastNames[i], nic, districts[i % districts.length], phone, `${id.toLowerCase()}@codehub.lk`],
+      [id, firstNames[i], lastNames[i], nic, districts[i % districts.length], phone, `${id.toLowerCase()}@codehub.lk`, passwordHash],
     )
   }
+
+  // Projects reference real applicant accounts in the canonical schema.
+  await pool.query(
+    `INSERT INTO users (user_id, first_name, last_name, nic, role, email, password_hash)
+     VALUES ('900000000001', 'Demo', 'Applicant One', '900000000001', 'Loan Applicant', 'applicant1@example.com', $1),
+            ('900000000002', 'Demo', 'Applicant Two', '900000000002', 'Loan Applicant', 'applicant2@example.com', $1)
+     ON CONFLICT (user_id) DO NOTHING`,
+    [passwordHash],
+  )
 
   // Two seed projects to hang the demo valuations on.
   await pool.query(

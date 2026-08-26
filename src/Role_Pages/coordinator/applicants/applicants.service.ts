@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common'
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import * as bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
@@ -12,7 +12,7 @@ import { toStoredPhone } from '../../../Common_Pages/validation/patterns'
 // Loan applicants are stored in the shared `users` table with role 'Loan Applicant'.
 // The NIC is used as their user_id (login id for external login).
 @Injectable()
-export class ApplicantsService implements OnModuleInit {
+export class ApplicantsService {
   private readonly logger = new Logger(ApplicantsService.name)
 
   constructor(
@@ -21,19 +21,42 @@ export class ApplicantsService implements OnModuleInit {
     private readonly notifications: NotificationsService,
   ) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS applicant_business_name VARCHAR(150) NOT NULL DEFAULT ''`)
-    } catch (err) {
-      this.logger.error(`Could not ensure applicant business-name field: ${(err as Error).message}`)
-    }
+
+
+  // Every registered loan applicant, with how many property projects each one
+  // has. The coordinator's Applicants page opens on this list so the roster is
+  // browsable, instead of only reachable by typing an exact NIC.
+  async listAll() {
+    const result = await this.db.query(
+      `SELECT u.user_id, u.first_name, u.last_name, u.nic, u.email, u.phone,
+              u.district, u.city, u.applicant_business_name,
+              COUNT(p.project_id) AS project_count
+         FROM users u
+         LEFT JOIN projects p ON p.applicant_nic = u.nic
+        WHERE u.role = 'Loan Applicant'
+        GROUP BY u.user_id, u.first_name, u.last_name, u.nic, u.email, u.phone,
+                 u.district, u.city, u.applicant_business_name
+        ORDER BY u.first_name, u.last_name`,
+    )
+    return result.rows.map((row) => ({
+      userId: row.user_id as string,
+      name: `${row.first_name} ${row.last_name}`.trim(),
+      nic: row.nic as string,
+      email: (row.email as string) ?? '',
+      phone: (row.phone as string) ?? '',
+      district: (row.district as string) ?? '',
+      city: (row.city as string) ?? '',
+      applicantBusinessName: (row.applicant_business_name as string) ?? '',
+      projectCount: Number(row.project_count ?? 0),
+    }))
   }
 
   // Find a registered loan applicant by NIC.
   async findByNic(nic: string) {
     const result = await this.db.query(
       `SELECT user_id, first_name, last_name, initials, applicant_business_name, nic, email, phone,
-              date_of_birth, province, district, city, postal_code, address
+              to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth,
+              province, district, city, postal_code, address
          FROM users
         WHERE nic = $1 AND role = 'Loan Applicant'
         LIMIT 1`,
@@ -49,7 +72,7 @@ export class ApplicantsService implements OnModuleInit {
       nic: row.nic as string,
       email: (row.email as string) ?? '',
       phone: (row.phone as string) ?? '',
-      dateOfBirth: row.date_of_birth ? String(row.date_of_birth).slice(0, 10) : '',
+      dateOfBirth: (row.date_of_birth as string) ?? '',
       province: (row.province as string) ?? '',
       district: (row.district as string) ?? '',
       city: (row.city as string) ?? '',

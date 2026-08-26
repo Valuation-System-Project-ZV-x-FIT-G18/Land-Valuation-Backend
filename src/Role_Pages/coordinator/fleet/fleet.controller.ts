@@ -48,14 +48,18 @@ export class FleetController {
 
   // POST /api/coordinator/fleet/accept-assignment  { valuationRowId, toId }
   @Post('accept-assignment')
-  async acceptAssignment(@Body() dto: AssignmentActionDto) {
-    return this.fleet.acceptAssignment(dto.valuationRowId, dto.toId)
+  async acceptAssignment(@CurrentUser() user: AuthUser, @Body() dto: AssignmentActionDto) {
+    // A technical officer may only act on their own assignment, so the officer
+    // id comes from the token rather than the request body.
+    const officerId = user.role === 'Technical Officer' ? user.userId : dto.toId
+    return this.fleet.acceptAssignment(dto.valuationRowId, officerId)
   }
 
   // POST /api/coordinator/fleet/reject  { valuationRowId, toId, reason }
   @Post('reject')
-  async reject(@Body() dto: RejectAssignmentDto) {
-    return this.fleet.rejectAssignment(dto.valuationRowId, dto.toId, dto.reason)
+  async reject(@CurrentUser() user: AuthUser, @Body() dto: RejectAssignmentDto) {
+    const officerId = user.role === 'Technical Officer' ? user.userId : dto.toId
+    return this.fleet.rejectAssignment(dto.valuationRowId, officerId, dto.reason)
   }
 
   // GET /api/coordinator/fleet/leaves?toId= — today's + upcoming marked leaves.

@@ -1,7 +1,12 @@
-import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { DatabaseService } from '../../Common_Pages/database/database.service'
 import { toStoredPhone, fromStoredPhone } from '../../Common_Pages/validation/patterns'
 import { ObjectStorageService } from '../../Common_Pages/storage/object-storage.service'
+
+const deriveInitials = (firstName: string, lastName: string) => {
+  const initials = firstName.trim().split(/\s+/).filter(Boolean).map((part) => `${part[0].toUpperCase()}.`).join(' ')
+  return `${initials} ${lastName.trim()}`.trim()
+}
 
 export type User = {
   user_id: string
@@ -13,54 +18,27 @@ export type User = {
   must_change_password: boolean
   photo_path: string
   email: string
+  session_version: number
+  account_status: 'Active' | 'Suspended' | 'Deactivated'
 }
 
 // Reads/writes the "users" table (staff + loan applicants).
 @Injectable()
-export class UsersService implements OnModuleInit {
+export class UsersService {
   private readonly logger = new Logger(UsersService.name)
 
   constructor(private readonly db: DatabaseService, private readonly storage: ObjectStorageService) {}
 
   // Make sure the first-login flag column exists (safe to re-run).
-  async onModuleInit() {
-    try {
-      await this.db.query(
-        `ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false`,
-      )
-      await this.db.query(
-        `ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_path VARCHAR(255) NOT NULL DEFAULT ''`,
-      )
-      // The profile picture itself lives in the database (not on disk):
-      // photo_data holds the raw bytes, photo_mime its content type. photo_path
-      // is repurposed as a cache-busting version token (still just a string).
-      await this.db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_data BYTEA`)
-      await this.db.query(
-        `ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime VARCHAR(100) NOT NULL DEFAULT ''`,
-      )
-      await this.db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE users ALTER COLUMN email TYPE VARCHAR(254)`)
-      await this.db.query(`ALTER TABLE users ALTER COLUMN email DROP DEFAULT`)
-      await this.db.query(`
-        DO $$
-        BEGIN
-          ALTER TABLE users
-            ADD CONSTRAINT users_email_required CHECK (btrim(email) <> '') NOT VALID;
-        EXCEPTION
-          WHEN duplicate_object THEN NULL;
-        END $$;
-      `)
-      await this.db.query(
-        `CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email)) WHERE email <> ''`,
-      )
-    } catch (err) {
-      this.logger.error(`Could not ensure user schema: ${(err as Error).message}`)
-    }
-  }
+
 
   async findById(userId: string): Promise<User | null> {
     const result = await this.db.query('SELECT * FROM users WHERE user_id = $1', [userId])
     return (result.rows[0] as User) ?? null
+  }
+
+  async recordSuccessfulLogin(userId: string) {
+    await this.db.query(`UPDATE users SET last_login_at = now() WHERE user_id = $1`, [userId])
   }
 
   // Set a new password hash and clear the first-login flag.
@@ -76,6 +54,13 @@ export class UsersService implements OnModuleInit {
     await this.db.query(
       `UPDATE users SET password_hash = $1, must_change_password = true WHERE user_id = $2`,
       [passwordHash, userId],
+    )
+  }
+
+  async revokeSessions(userId: string) {
+    await this.db.query(
+      `UPDATE users SET session_version = session_version + 1 WHERE user_id = $1`,
+      [userId],
     )
   }
 
@@ -165,7 +150,6 @@ export class UsersService implements OnModuleInit {
     d: {
       firstName?: string
       lastName?: string
-      initials?: string
       email?: string
       phone?: string
       dateOfBirth?: string
@@ -186,7 +170,7 @@ export class UsersService implements OnModuleInit {
         userId,
         (d.firstName ?? '').trim(),
         (d.lastName ?? '').trim(),
-        (d.initials ?? '').trim(),
+        deriveInitials(d.firstName ?? '', d.lastName ?? ''),
         (d.email ?? '').trim(),
         toStoredPhone(d.phone),
         d.dateOfBirth || null,

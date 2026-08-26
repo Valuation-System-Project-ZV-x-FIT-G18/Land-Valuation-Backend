@@ -13,6 +13,8 @@ import { memoryStorage } from 'multer'
 import type { Response } from 'express'
 import { SitePhotosService } from './site-photos.service'
 import { UploadSitePhotoDto } from './dto/upload-photo.dto'
+import { CurrentUser } from '../../../Home_Pages/auth/decorators/current-user.decorator'
+import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 @Controller('technical-officer/site-photos')
 export class SitePhotosController {
@@ -20,7 +22,8 @@ export class SitePhotosController {
 
   // GET /api/technical-officer/site-photos?projectId=...
   @Get()
-  async list(@Query('projectId') projectId: string) {
+  async list(@Query('projectId') projectId: string, @CurrentUser() user: AuthUser) {
+    await this.photos.assertReadable(projectId ?? '', user)
     return { photos: await this.photos.list(projectId ?? '') }
   }
 
@@ -34,10 +37,12 @@ export class SitePhotosController {
   )
   async upload(
     @Body() dto: UploadSitePhotoDto,
+    @CurrentUser() user: AuthUser,
     @UploadedFile() file?: Express.Multer.File,
   ) {
+    await this.photos.assertEditable(dto.projectId, user)
     return this.photos.upload(
-      dto.projectId, dto.toId, dto.photoType,
+      dto.projectId, user.userId, dto.photoType,
       file, dto.describe === 'true', dto.photoLabel ?? '',
     )
   }
@@ -47,8 +52,10 @@ export class SitePhotosController {
   async file(
     @Query('projectId') projectId: string,
     @Query('photoType') photoType: string,
+    @CurrentUser() user: AuthUser,
     @Res() res: Response,
   ) {
+    await this.photos.assertReadable(projectId ?? '', user)
     const f = await this.photos.attachment(projectId ?? '', photoType ?? '')
     if (!f) { res.status(404).json({ error: 'Photo not found.' }); return }
     if (!f.data) {

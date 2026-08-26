@@ -1,5 +1,5 @@
 //04
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { AiService } from '../../../Common_Pages/ai/ai.service'
 import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
@@ -159,7 +159,7 @@ const SECTION_FIELDS: Record<TextSection, Field[]> = {
 }
 
 @Injectable()
-export class DescriptionsService implements OnModuleInit {
+export class DescriptionsService {
   private readonly logger = new Logger(DescriptionsService.name)
 
   constructor(
@@ -168,20 +168,7 @@ export class DescriptionsService implements OnModuleInit {
     private readonly storage: ObjectStorageService,
   ) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(
-        `CREATE TABLE IF NOT EXISTS descriptions (
-           id SERIAL PRIMARY KEY,
-           project_id VARCHAR(20) NOT NULL UNIQUE,
-           data JSONB NOT NULL DEFAULT '{}',
-           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-         )`,
-      )
-    } catch (err) {
-      this.logger.error(`Descriptions setup failed: ${(err as Error).message}`)
-    }
-  }
+
 
   // ---- gather ------------------------------------------------------------
 
@@ -238,6 +225,79 @@ export class DescriptionsService implements OnModuleInit {
   }
 
   // ---- generation --------------------------------------------------------
+
+  // Write every narrative section in ONE Gemini request, then save them so the
+  // report picks them up without the officer visiting this step.
+  //
+  // The browser used to fire one request per section — sixteen at once. The
+  // free Gemini tier allows about twenty per window, so a single "generate all"
+  // click exhausted the quota, every following call returned 429, and the whole
+  // report quietly fell back to template wording. Asking once for all sections
+  // is sixteen times cheaper and keeps the AI text the officer expects.
+  //
+  // Any section the model omits, or every section if the call fails outright,
+  // falls back to the deterministic template — never to a blank.
+  async generateAll(projectId: string) {
+    const id = (projectId ?? '').trim()
+    const gathered = await this.gather(id)
+    if (!gathered) return { ok: false as const, error: 'Project not found.' }
+
+    const sections = Object.keys(SECTION_FIELDS) as TextSection[]
+    const factsBySection = Object.fromEntries(
+      sections.map((section) => [
+        section,
+        Object.fromEntries(
+          SECTION_FIELDS[section].map((field) => [field.label, this.val(gathered, field)]),
+        ),
+      ]),
+    )
+
+    let generated: Record<string, string> = {}
+    let aiUsed = false
+    if (this.ai.isEnabled()) {
+      try {
+        const prompt =
+          `You are a professional Sri Lankan land valuer writing a valuation report.\n` +
+          `Write one paragraph for EACH section below, using ONLY that section's facts. ` +
+          `Do not invent facts. If a section has no usable facts, return an empty string for it.\n` +
+          `Reply with ONLY a JSON object: {"<section>": "<paragraph>", ...} using exactly these ` +
+          `section keys: ${sections.join(', ')}.\n` +
+          `No markdown, no code fence, no commentary.\n\n` +
+          `SECTIONS AND FACTS:\n${JSON.stringify(factsBySection, null, 1)}`
+        const raw = (await this.ai.generate(prompt)).trim()
+        // Models often wrap JSON in a ```json fence despite being told not to.
+        const json = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '')
+        const parsed = JSON.parse(json) as Record<string, unknown>
+        for (const section of sections) {
+          const text = String(parsed[section] ?? '').trim()
+          if (text) generated[section] = text
+        }
+        aiUsed = Object.keys(generated).length > 0
+      } catch (err) {
+        this.logger.error(`AI generate-all failed: ${(err as Error).message}`)
+        generated = {}
+      }
+    }
+
+    // Fill anything the model did not produce with the template wording.
+    const data: Record<string, string> = { ...((await this.get(id)) ?? {}) }
+    for (const section of sections) {
+      const fields = Object.fromEntries(
+        SECTION_FIELDS[section].map((field) => [field.key, this.val(gathered, field)]),
+      )
+      data[section] =
+        generated[section] || this.reportStyleTemplate(section, fields) || this.tpl(section, fields)
+    }
+
+    await this.save(id, data)
+    return {
+      ok: true as const,
+      aiUsed,
+      aiSections: Object.keys(generated).length,
+      totalSections: sections.length,
+      data,
+    }
+  }
 
   // Regenerate ONE section from the given (possibly edited) field values.
   async generateOne(projectId: string, section: string, fields: Record<string, string>) {
@@ -706,8 +766,14 @@ export class DescriptionsService implements OnModuleInit {
   }
 
   // Projects that have already been saved (so they drop off the "to do" list).
-  async completedProjects(): Promise<string[]> {
-    const r = await this.db.query(`SELECT project_id FROM descriptions`)
+  async completedProjects(technicalOfficerId: string): Promise<string[]> {
+    const r = await this.db.query(
+      `SELECT DISTINCT d.project_id
+         FROM descriptions d
+         JOIN valuations v ON v.project_id = d.project_id
+        WHERE v.technical_officer_id = $1`,
+      [technicalOfficerId],
+    )
     return r.rows.map((x) => x.project_id as string)
   }
 

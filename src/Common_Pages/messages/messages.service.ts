@@ -1,5 +1,5 @@
 //10
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../database/database.service'
 import { ObjectStorageService } from '../storage/object-storage.service'
 
@@ -7,38 +7,12 @@ type Row = Record<string, unknown>
 
 // Private 1-to-1 messaging between any two users (staff or applicants).
 @Injectable()
-export class MessagesService implements OnModuleInit {
+export class MessagesService {
   private readonly logger = new Logger(MessagesService.name)
 
   constructor(private readonly db: DatabaseService, private readonly storage: ObjectStorageService) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(
-        `CREATE TABLE IF NOT EXISTS messages (
-           id           SERIAL PRIMARY KEY,
-           sender_id    VARCHAR(20)  NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-           recipient_id VARCHAR(20)  NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-           body         TEXT         NOT NULL DEFAULT '',
-           file_name    VARCHAR(255) NOT NULL DEFAULT '', -- original name (e.g. plan.pdf)
-           file_path    VARCHAR(255) NOT NULL DEFAULT '', -- stored file on disk
-           read         BOOLEAN      NOT NULL DEFAULT false,
-           created_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
-         )`,
-      )
-      await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name VARCHAR(255) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_path VARCHAR(255) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_data BYTEA`)
-      await this.db.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE messages ALTER COLUMN body SET DEFAULT ''`)
-      await this.db.query(
-        `CREATE INDEX IF NOT EXISTS messages_pair_idx ON messages (sender_id, recipient_id)`,
-      )
-    } catch (err) {
-      this.logger.error(`Messages setup failed: ${(err as Error).message}`)
-    }
-  }
+
 
   private toMessage(m: Row) {
     return {

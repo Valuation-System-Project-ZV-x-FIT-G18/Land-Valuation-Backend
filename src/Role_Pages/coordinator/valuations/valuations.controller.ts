@@ -37,6 +37,14 @@ export class ValuationsController {
     return { ok: true, rowId, valuationId }
   }
 
+  // GET /api/coordinator/valuations/list — every valuation, for the
+  // coordinator's Valuations page.
+  @Get('list')
+  async list() {
+    const valuations = await this.valuations.listAll()
+    return { valuations }
+  }
+
   // GET /api/coordinator/valuations/by-project?projectId=pro001
   @Get('by-project')
   async byProject(@CurrentUser() user: AuthUser, @Query('projectId') projectId: string) {

@@ -91,20 +91,23 @@ export class PdfReportService {
      area inside our A4 margins is shorter, so constrain those page wrappers
      to the real content box instead of allowing their footer to spill. */
   .report-page { width: 100%; min-height: 235mm !important; display: flex !important; flex-direction: column !important; break-after: page !important; page-break-after: always !important; }
-  .report-page:last-child { break-after: page !important; page-break-after: always !important; }
+  /* Never force a break after the final authored page. Chromium otherwise
+     emits a trailing blank A4 sheet for some saved reports. */
+  .report-page:last-child { break-after: auto !important; page-break-after: auto !important; }
   .report-page > [style*="border-top:2px solid #1f3a4d"],
   .report-page > [style*="border-top: 2px solid #1f3a4d"] { margin-top: auto !important; }
   .report-page > [style*="min-height:1000px"],
   .report-page > [style*="min-height: 1000px"] { min-height: 235mm !important; }
-  h1, h2, h3, h4 { break-after: avoid-page; page-break-after: avoid; }
+  h1, h2, h3, h4 { break-after: avoid-page; page-break-after: avoid; orphans: 3; widows: 3; }
   p { orphans: 3; widows: 3; }
   table { width: 100% !important; max-width: 100% !important; border-collapse: collapse; }
   table.keep-table { break-inside: avoid-page !important; page-break-inside: avoid !important; }
   thead { display: table-header-group; }
   tfoot { display: table-footer-group; }
-  tr, figure, .keep-together { break-inside: avoid-page; page-break-inside: avoid; }
+  tr, figure, .keep-together, blockquote { break-inside: avoid-page; page-break-inside: avoid; }
   th, td { padding: 5px 7px; overflow-wrap: anywhere; }
-  img { max-width: 100% !important; height: auto; object-fit: contain; break-inside: avoid-page; }
+  img { max-width: 100% !important; max-height: 220mm !important; height: auto !important; object-fit: contain; break-inside: avoid-page; page-break-inside: avoid; }
+  pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
   .page-break { break-before: page; page-break-before: always; }
   [style*="page-break-after:always"], [style*="page-break-after: always"] { break-after: page; }
   .image-unavailable { display: flex; min-height: 40mm; align-items: center; justify-content: center; border: 1px solid #bbb; color: #666; font: 9pt Arial, sans-serif; }
@@ -118,6 +121,7 @@ export class PdfReportService {
     })
     try {
       const page = await browser.newPage()
+      await page.setViewport({ width: 794, height: 1123, deviceScaleFactor: 1 })
       // CSP prevents saved report markup from executing scripts. JavaScript
       // remains enabled for our isolated image-loading timeout below.
       await page.setJavaScriptEnabled(true)
@@ -149,6 +153,13 @@ export class PdfReportService {
           }
           if (rows.length <= 6) table.classList.add('keep-table')
         }
+        // Content editors can leave empty trailing blocks after the final
+        // authored page. Remove only truly empty blocks so intentional spacing
+        // inside the report remains untouched and no blank PDF sheet is added.
+        while (root?.lastElementChild && !root.lastElementChild.textContent?.trim()
+          && !root.lastElementChild.querySelector('img, table, hr')) {
+          root.lastElementChild.remove()
+        }
         // Old browser previews may have persisted this onerror fallback more
         // than once. The renderer supplies one consistent placeholder below.
         for (const span of Array.from(root?.querySelectorAll('span') ?? [])) {
@@ -178,7 +189,7 @@ export class PdfReportService {
         preferCSSPageSize: true,
         displayHeaderFooter: true,
         headerTemplate: '<div></div>',
-        footerTemplate: `<div style="box-sizing:border-box;width:100%;padding:0 18mm;font:8px Arial;color:#666;display:flex;justify-content:space-between"><span>${title} — ${id}</span><span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span></div>`,
+        footerTemplate: `<div style="box-sizing:border-box;width:100%;padding:0 18mm;font:8px Arial;color:#666;display:flex;justify-content:space-between"><span>${title} — ${id} · Confidential</span><span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span></div>`,
       }))
     } finally {
       await browser.close()

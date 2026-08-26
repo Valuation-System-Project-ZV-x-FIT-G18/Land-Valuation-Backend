@@ -1,34 +1,13 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common'
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { SaveValuerProfileDto } from './dto/valuer-profile.dto'
 
 @Injectable()
-export class ValuerProfileService implements OnModuleInit {
+export class ValuerProfileService {
   private readonly logger = new Logger(ValuerProfileService.name)
   constructor(private readonly db: DatabaseService) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(`CREATE TABLE IF NOT EXISTS valuer_profiles (
-        user_id VARCHAR(20) PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
-        valuer_name VARCHAR(150) NOT NULL,
-        conflict_of_interest VARCHAR(30) NOT NULL,
-        conflict_details TEXT NOT NULL DEFAULT '',
-        professional_qualifications VARCHAR(500) NOT NULL,
-        ivsl_registration_number VARCHAR(50) NOT NULL,
-        rics_registration_number VARCHAR(50) NOT NULL DEFAULT '',
-        rics_membership VARCHAR(30) NOT NULL DEFAULT '',
-        relevant_experience VARCHAR(30) NOT NULL,
-        indemnity_status VARCHAR(30) NOT NULL,
-        indemnity_policy_number VARCHAR(100) NOT NULL DEFAULT '',
-        indemnity_expiry_date DATE,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )`)
-      await this.db.query(`ALTER TABLE valuer_profiles ADD COLUMN IF NOT EXISTS rics_membership VARCHAR(30) NOT NULL DEFAULT ''`)
-    } catch (error) {
-      this.logger.error(`Valuer profile setup failed: ${(error as Error).message}`)
-    }
-  }
+
 
   private async assertManagerL1(userId: string) {
     const id = userId.trim()

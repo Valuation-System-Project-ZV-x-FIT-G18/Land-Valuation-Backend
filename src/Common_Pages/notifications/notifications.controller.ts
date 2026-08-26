@@ -1,21 +1,24 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common'
+import { Controller, Get, Post } from '@nestjs/common'
 import { NotificationsService } from './notifications.service'
-import { MarkReadDto } from './dto/mark-read.dto'
+import { CurrentUser } from '../../Home_Pages/auth/decorators/current-user.decorator'
+import type { AuthUser } from '../../Home_Pages/auth/types/auth-user'
 
 @Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notifications: NotificationsService) {}
 
-  // GET /api/notifications?userId=...
+  // GET /api/notifications — always the signed-in user's own notifications.
+  // The id comes from the verified token, never from the request, so nobody
+  // can read another user's notifications by changing a parameter.
   @Get()
-  async list(@Query('userId') userId: string) {
-    return this.notifications.list(userId ?? '')
+  async list(@CurrentUser() user: AuthUser) {
+    return this.notifications.list(user.userId)
   }
 
-  // POST /api/notifications/read { userId }
+  // POST /api/notifications/read
   @Post('read')
-  async read(@Body() dto: MarkReadDto) {
-    await this.notifications.markRead(dto.userId)
+  async read(@CurrentUser() user: AuthUser) {
+    await this.notifications.markRead(user.userId)
     return { ok: true }
   }
 }

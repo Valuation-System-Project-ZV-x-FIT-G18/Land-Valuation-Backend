@@ -1,8 +1,9 @@
 //06
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { ConflictException, ForbiddenException, Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
+import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 type Row = Record<string, any>
 
@@ -17,10 +18,33 @@ function fmtDate(s: string): string {
   return `${String(day).padStart(2, '0')}${suf} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`
 }
 
+// A timestamp column arrives as a JS Date. String(date).slice(0, 10) yields
+// "Tue Aug 25", which fmtDate then reparses into the year 2001 (V8's default
+// for a date with no year). Go through the ISO form instead.
+function isoDay(value: unknown): string {
+  if (!value) return ''
+  const d = value instanceof Date ? value : new Date(String(value))
+  return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10)
+}
+
+
+// Sri Lankan land extents are recorded as Acres-Roods-Perches; the hectare
+// figure the report also prints is simply the same measurement in metric.
+// It was an optional number field on the project form, so it was usually left
+// blank and the report went to the bank reading "Hectares: [ To be filled ]".
+// Deriving it removes both the retyping and the chance of a mismatch.
+// 1 acre = 4 roods = 160 perches, 1 perch = 25.29285264 m².
+function hectaresFrom(acres: unknown, roods: unknown, perches: unknown): string {
+  const totalPerches =
+    (Number(acres) || 0) * 160 + (Number(roods) || 0) * 40 + (Number(perches) || 0)
+  if (totalPerches <= 0) return ''
+  return (totalPerches * 25.29285264 / 10000).toFixed(4)
+}
+
 // Assembles the editable "Create Draft" valuation report by pulling together
 // everything captured for a project and mapping it to the report's placeholders.
 @Injectable()
-export class DraftService implements OnModuleInit {
+export class DraftService {
   private readonly logger = new Logger(DraftService.name)
 
   constructor(
@@ -29,16 +53,19 @@ export class DraftService implements OnModuleInit {
     private readonly notifications: NotificationsService,
   ) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(`CREATE TABLE IF NOT EXISTS drafts (
-        id SERIAL PRIMARY KEY, project_id VARCHAR(20) NOT NULL UNIQUE,
-        data JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`)
-      await this.db.query(`ALTER TABLE drafts ADD COLUMN IF NOT EXISTS review_status VARCHAR(20) NOT NULL DEFAULT 'draft'`)
-    } catch (err) {
-      this.logger.error(`Draft setup failed: ${(err as Error).message}`)
+  async assertAssigned(projectId: string, user: AuthUser) {
+    if (user.role !== 'Technical Officer') {
+      throw new ForbiddenException('Only a technical officer can use the draft workspace.')
     }
+    const project = (projectId ?? '').trim()
+    const assigned = await this.db.query(
+      `SELECT 1 FROM valuations WHERE project_id = $1 AND technical_officer_id = $2 LIMIT 1`,
+      [project, user.userId],
+    )
+    if (!assigned.rowCount) throw new ForbiddenException('This project is not assigned to you.')
   }
+
+
 
   private field(p: Row, key: string, column: string): string {
     const col = p[column]
@@ -69,7 +96,18 @@ export class DraftService implements OnModuleInit {
     const vd = ((await this.db.query(
       `SELECT details FROM valuations WHERE project_id = $1 ORDER BY valuation_id DESC LIMIT 1`, [id],
     )).rows[0]?.details ?? {}) as Row
-    const bank = { bank_name: vd.bankName ?? '', branch_name: vd.branchName ?? '' } as Row
+    // The branch's city lives on the branch record, keyed by the branch code
+    // the coordinator picked. Reading it here means the report always shows
+    // the registered city rather than a value re-typed per valuation.
+    const branchCity = ((await this.db.query(
+      `SELECT city FROM bank_branches WHERE branch_code = $1 LIMIT 1`,
+      [String(vd.bankBranchCode ?? '').trim()],
+    )).rows[0]?.city ?? '') as string
+    const bank = {
+      bank_name: vd.bankName ?? '',
+      branch_name: vd.branchName ?? '',
+      branch_city: branchCity,
+    } as Row
     const valuer = ((await this.db.query(
       `SELECT vp.* FROM valuer_profiles vp
          JOIN users u ON u.user_id = vp.user_id
@@ -83,15 +121,16 @@ export class DraftService implements OnModuleInit {
     const calc = (la.calculation ?? {}) as Row
     const propertyAddress = [f('propertyNumber', 'property_number'), f('streetName', 'street_name'), f('villageTown', 'village_town'), f('district', 'district')].filter(Boolean).join(', ')
     const extentsTally = f('extentsTally', 'extents_tally').trim().toLowerCase()
-    const localityFacilities = desc.localityFacilities || desc.localityDescription || map.locality_description || [
-      insp.vicinityCharacter && `The subject property is situated in a ${String(insp.vicinityCharacter).toLowerCase()} locality.`,
-      insp.nearbyFacilities && `Nearby facilities include ${String(insp.nearbyFacilities).replace(/[.]+$/, '')}.`,
-      insp.transportFrequency && `Public transport availability is ${String(insp.transportFrequency).toLowerCase()}.`,
-      insp.dayToDayNeeds && `Day-to-day requirements are ${String(insp.dayToDayNeeds).toLowerCase()}.`,
-    ].filter(Boolean).join(' ')
-    const conclusion = desc.conclusion || la.conclusion?.text || (calc.marketValue
-      ? `Having considered the location, physical characteristics, available comparable evidence and prevailing market conditions, and applying the Direct Comparison Method, the current Market Value of the subject property is concluded at Rs. ${Number(calc.marketValue).toLocaleString('en-US')} /-.`
-      : '')
+    // Narrative sections come from the Descriptions step only. Stitching a
+    // paragraph together from the inspection answers here put template prose
+    // into the report before anything had tried to write it — indistinguishable
+    // from generated text, and produced even when the AI was perfectly
+    // available. With no saved description the report shows its "to be filled"
+    // marker instead, which is honest about the state of the report.
+    const localityFacilities = desc.localityFacilities || desc.localityDescription || map.locality_description || ''
+    // Same rule: the saved description, or the conclusion the nearby analysis
+    // generated. No locally invented sentence.
+    const conclusion = desc.conclusion || la.conclusion?.text || ''
     const extentVerificationStatement = ['yes', 'true', 'tally', 'tallies'].includes(extentsTally)
       ? 'The extent mentioned in the above survey plan tallies with the above deed.'
       : ['no', 'false', 'do not tally', 'does not tally'].includes(extentsTally)
@@ -164,7 +203,7 @@ export class DraftService implements OnModuleInit {
       bankName: bank.bank_name ?? f('bankName', 'bank_name'),
       branchName: bank.branch_name ?? '',
       bankBranchName: bank.branch_name ?? '',
-      bankBranchCity: bank.branch_name ?? '',
+      bankBranchCity: bank.branch_city ?? '',
       contactNo: appl.phone ?? '',
       // Survey plan (used everywhere the plan is cited)
       lotNo: f('lotNumber', 'lot_number'),
@@ -174,7 +213,11 @@ export class DraftService implements OnModuleInit {
       surveyDate,
       surveyPlanDate: surveyDate,
       surveyorName: f('surveyorName', 'surveyor_name'),
-      valuationRequestDate: fmtDate(f('bankRequestDate', 'bank_request_date') || (p.created_at ? String(p.created_at).slice(0, 10) : '')),
+      valuationRequestDate: fmtDate(
+        f('bankRequestDate', 'bank_request_date') ||
+        String(vd.bankRequestDate ?? '') ||
+        isoDay(p.created_at),
+      ),
       // Property
       propertyLocationCity: f('villageTown', 'village_town'),
       propertyNumber: f('propertyNumber', 'property_number'),
@@ -191,6 +234,7 @@ export class DraftService implements OnModuleInit {
       marketValueWords: summary.marketValueWords ?? '',
       forcedSaleValue: String(summary.forcedSaleValue ?? ''),
       forcedSaleValueWords: summary.forcedSaleValueWords ?? '',
+      forcedSalePct: String(summary.forcedSalePct ?? 80),
       // Deed
       deedType: f('deedType', 'deed_type'),
       deedNo: f('deedNumber', 'deed_number'),
@@ -204,12 +248,16 @@ export class DraftService implements OnModuleInit {
       extentAcres: f('extentAcres', 'extent_acres'),
       extentRoods: f('extentRoods', 'extent_roods'),
       extentPerches: f('extentPerches', 'extent_perches'),
-      extentHectares: f('extentHectares', 'extent_hectares'),
+      extentHectares:
+        f('extentHectares', 'extent_hectares') ||
+        hectaresFrom(f('extentAcres', 'extent_acres'), f('extentRoods', 'extent_roods'), f('extentPerches', 'extent_perches')),
       // Extent per deed
       deedAcres: f('deedExtentAcres', 'deed_extent_acres'),
       deedRoods: f('deedExtentRoods', 'deed_extent_roods'),
       deedPerches: f('deedExtentPerches', 'deed_extent_perches'),
-      deedHectares: f('deedExtentHectares', 'deed_extent_hectares'),
+      deedHectares:
+        f('deedExtentHectares', 'deed_extent_hectares') ||
+        hectaresFrom(f('deedExtentAcres', 'deed_extent_acres'), f('deedExtentRoods', 'deed_extent_roods'), f('deedExtentPerches', 'deed_extent_perches')),
       deedExtentAcres: f('deedExtentAcres', 'deed_extent_acres'),
       deedExtentRoods: f('deedExtentRoods', 'deed_extent_roods'),
       deedExtentPerches: f('deedExtentPerches', 'deed_extent_perches'),
@@ -365,13 +413,67 @@ export class DraftService implements OnModuleInit {
     return (r.rows[0]?.data as Record<string, string>) ?? null
   }
 
+  async history(projectId: string) {
+    const result = await this.db.query(
+      `SELECT version_number, event, review_status, actor_user_id, actor_role, reason, created_at
+         FROM draft_versions WHERE project_id = $1 ORDER BY version_number DESC`,
+      [(projectId ?? '').trim()],
+    )
+    return result.rows.map((row) => ({
+      version: Number(row.version_number),
+      event: String(row.event),
+      reviewStatus: String(row.review_status),
+      actorUserId: String(row.actor_user_id ?? ''),
+      actorRole: String(row.actor_role),
+      reason: String(row.reason ?? ''),
+      createdAt: row.created_at ? new Date(row.created_at).toISOString() : '',
+    }))
+  }
+
+  private async recordVersion(projectId: string, reportHtml: string, event: string, status: string, user: AuthUser, reason = '') {
+    await this.db.query(
+      `INSERT INTO draft_versions
+        (project_id, version_number, report_html, event, review_status, actor_user_id, actor_role, reason)
+       SELECT $1, COALESCE(MAX(version_number), 0) + 1, $2, $3, $4, $5, $6, $7
+         FROM draft_versions WHERE project_id = $1`,
+      [projectId, reportHtml, event, status, user.userId, user.role, reason],
+    )
+  }
+
+  // Persist an editable working copy without entering the manager-review
+  // workflow. Submission remains an explicit officer action.
+  async autosave(projectId: string, data: Record<string, string>, user: AuthUser) {
+    const p = (projectId ?? '').trim()
+    if (!p) return { ok: false, error: 'Missing project.' }
+    await this.assertAssigned(p, user)
+
+    const existing = await this.db.query(`SELECT review_status FROM drafts WHERE project_id = $1`, [p])
+    const status = String(existing.rows[0]?.review_status ?? '')
+    if (status && !['draft', 'rejected_to_to'].includes(status)) {
+      throw new ConflictException('This report is already in review and cannot be auto-saved.')
+    }
+
+    await this.db.query(
+      `INSERT INTO drafts (project_id, data, review_status)
+       VALUES ($1, $2::jsonb, 'draft')
+       ON CONFLICT (project_id) DO UPDATE SET
+         data = COALESCE(drafts.data, '{}'::jsonb) || $2::jsonb,
+         created_at = now()`,
+      [p, JSON.stringify(data ?? {})],
+    )
+    const reportHtml = String(data?.reportHtml ?? '')
+    if (reportHtml) await this.recordVersion(p, reportHtml, 'submitted', 'pending_l3', user)
+    return { ok: true, savedAt: new Date().toISOString() }
+  }
+
   // Saving the draft submits it for the L3 check: it is stored, the review
   // status becomes "pending_l3", the project moves forward, and the L3 managers
   // + the loan applicant are notified. Re-saving while it is already further
   // along (with L2/L1/locked) keeps that status and does not re-notify.
-  async save(projectId: string, data: Record<string, string>) {
+  async save(projectId: string, data: Record<string, string>, user: AuthUser) {
     const p = (projectId ?? '').trim()
     if (!p) return { ok: false, error: 'Missing project.' }
+    await this.assertAssigned(p, user)
 
     const prev =
       (await this.db.query(`SELECT review_status FROM drafts WHERE project_id = $1`, [p]))

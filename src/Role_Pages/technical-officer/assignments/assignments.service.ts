@@ -12,7 +12,7 @@ export class AssignmentsService {
     if (!id) return []
 
     const r = await this.db.query(
-      `SELECT v.id AS valuation_row_id, v.valuation_id, v.project_id, v.status, v.assigned_date, v.assigned_time,
+      `SELECT v.id AS valuation_row_id, v.valuation_id, v.project_id, v.status, to_char(v.assigned_date, 'YYYY-MM-DD') AS assigned_date, v.assigned_time,
               p.property_type, p.owner_name_as_per_deed, p.applicant_nic,
               p.property_number, p.street_name, p.village_town, p.gn_division,
               p.ds_division, p.district, p.province, p.postal_code,

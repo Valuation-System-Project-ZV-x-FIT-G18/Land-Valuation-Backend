@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { MailService } from '../../../Common_Pages/mail/mail.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
@@ -18,7 +18,7 @@ const todayIso = () => {
 // Fleet management for the coordinator: the pool of technical officers and the
 // work (valuations) waiting to be assigned to them.
 @Injectable()
-export class FleetService implements OnModuleInit {
+export class FleetService {
   private readonly logger = new Logger(FleetService.name)
 
   constructor(
@@ -28,64 +28,7 @@ export class FleetService implements OnModuleInit {
   ) {}
 
   // Ensure the columns/tables this feature needs exist (safe to re-run).
-  async onModuleInit() {
-    const cols = [
-      `assigned_date VARCHAR(20) NOT NULL DEFAULT ''`,
-      `assigned_time VARCHAR(20) NOT NULL DEFAULT ''`,
-      `rejection_reason TEXT NOT NULL DEFAULT ''`,
-    ]
-    try {
-      for (const def of cols) {
-        await this.db.query(`ALTER TABLE valuations ADD COLUMN IF NOT EXISTS ${def}`)
-      }
-      // Technical officers currently on leave (one row per leave). to_id is the
-      // officer's login id (users.user_id, role 'Technical Officer').
-      await this.db.query(
-        `CREATE TABLE IF NOT EXISTS to_leaves (
-           id         SERIAL PRIMARY KEY,
-           to_id      VARCHAR(20) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-           reason     TEXT NOT NULL DEFAULT '',
-           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-         )`,
-      )
-      await this.db.query(
-        `CREATE INDEX IF NOT EXISTS to_leaves_to_id_idx ON to_leaves (to_id)`,
-      )
-      // The specific day the officer is on leave (attendance marking). Older rows
-      // with NULL are treated as "on leave today" (indefinite).
-      await this.db.query(`ALTER TABLE to_leaves ADD COLUMN IF NOT EXISTS leave_date DATE`)
-      await this.db.query(`ALTER TABLE to_leaves ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'Approved'`)
-      // Keep only the oldest copy if duplicate leave days already exist, then
-      // enforce one leave entry per officer per calendar date at database level.
-      await this.db.query(
-        `DELETE FROM to_leaves newer
-          USING to_leaves older
-         WHERE newer.to_id = older.to_id
-           AND newer.leave_date = older.leave_date
-           AND newer.id > older.id`,
-      )
-      await this.db.query(
-        `CREATE UNIQUE INDEX IF NOT EXISTS to_leaves_officer_date_unique
-           ON to_leaves (to_id, leave_date)
-         WHERE leave_date IS NOT NULL`,
-      )
-      // Add the foreign key to an older to_leaves table that lacks it.
-      await this.db.query(
-        `DO $$
-         BEGIN
-           IF NOT EXISTS (
-             SELECT 1 FROM pg_constraint WHERE conname = 'to_leaves_to_id_fkey'
-           ) THEN
-             ALTER TABLE to_leaves
-               ADD CONSTRAINT to_leaves_to_id_fkey
-               FOREIGN KEY (to_id) REFERENCES users(user_id) ON DELETE CASCADE;
-           END IF;
-         END $$;`,
-      )
-    } catch (err) {
-      this.logger.error(`Fleet setup failed: ${(err as Error).message}`)
-    }
-  }
+
 
   // Shared shape for a technical officer row.
   private officer(row: Record<string, unknown>) {
@@ -140,9 +83,12 @@ export class FleetService implements OnModuleInit {
 
     const assigned = await this.db.query(
       `SELECT u.user_id, u.nic, u.first_name, u.last_name, u.district, u.phone, u.email,
-              v.project_id, v.id AS row_id, v.valuation_id, v.status
+              v.project_id, v.id AS row_id, v.valuation_id, v.status,
+              to_char(v.assigned_date, 'YYYY-MM-DD') AS assigned_date, v.assigned_time, p.property_number, p.street_name,
+              p.village_town, p.property_city, p.district AS property_district
          FROM valuations v
          JOIN users u ON u.user_id = v.technical_officer_id
+         JOIN projects p ON p.project_id = v.project_id
         WHERE v.status IN ($1, $2) AND v.technical_officer_id <> ''
         ORDER BY v.project_id`,
       [TO_ASSIGNED, TO_ACCEPTED],
@@ -175,6 +121,12 @@ export class FleetService implements OnModuleInit {
         valuationRowId: Number(r.row_id),
         valuationId: Number(r.valuation_id),
         status: r.status as string,
+        assignedDate: (r.assigned_date as string) ?? '',
+        assignedTime: (r.assigned_time as string) ?? '',
+        propertyLocation: [
+          r.property_number, r.street_name, r.village_town,
+          r.property_city, r.property_district,
+        ].filter(Boolean).join(', '),
       })),
       onLeave: onLeave.rows.map((r) => ({ ...this.officer(r), reason: r.reason as string })),
       rejected: rejected.rows.map((r) => ({
@@ -191,7 +143,7 @@ export class FleetService implements OnModuleInit {
     const v = await this.db.query(
       `SELECT id AS row_id, valuation_id, project_id, applicant_nic
          FROM valuations
-        WHERE (technical_officer_id = '' OR technical_officer_id IS NULL)
+        WHERE technical_officer_id IS NULL
           AND status <> 'Rejected'
         ORDER BY created_at DESC`,
     )
@@ -242,7 +194,7 @@ export class FleetService implements OnModuleInit {
     for (const p of projs.rows) {
       const vals = await this.db.query(
         `SELECT v.id, v.valuation_id, v.status, v.technical_officer_id,
-                v.assigned_date, v.assigned_time,
+                to_char(v.assigned_date, 'YYYY-MM-DD') AS assigned_date, v.assigned_time,
                 o.first_name AS o_first, o.last_name AS o_last, o.phone AS o_phone
            FROM valuations v
            LEFT JOIN users o ON o.user_id = v.technical_officer_id
@@ -318,7 +270,8 @@ export class FleetService implements OnModuleInit {
     if (!Number.isInteger(n)) return { ok: false, error: 'Invalid valuation.' }
     await this.db.query(
       `UPDATE valuations
-          SET technical_officer_id = '', status = 'Created', rejection_reason = ''
+          SET technical_officer_id = NULL, assigned_date = NULL, assigned_time = NULL,
+              status = 'Created', rejection_reason = ''
         WHERE id = $1`,
       [n],
     )

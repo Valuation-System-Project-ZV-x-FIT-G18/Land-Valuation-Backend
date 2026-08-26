@@ -1,34 +1,16 @@
 //04
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 
 type Row = Record<string, any>
 
 @Injectable()
-export class MappingService implements OnModuleInit {
+export class MappingService {
   private readonly logger = new Logger(MappingService.name)
 
   constructor(private readonly db: DatabaseService) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(`CREATE TABLE IF NOT EXISTS map_analyses (
-        id SERIAL PRIMARY KEY, project_id VARCHAR(20) NOT NULL UNIQUE,
-        lat DOUBLE PRECISION, lng DOUBLE PRECISION, access_description TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now())`)
-      await this.db.query(
-        `ALTER TABLE map_analyses ADD COLUMN IF NOT EXISTS locality_description TEXT`,
-      )
-      await this.db.query(
-        `ALTER TABLE map_analyses ADD COLUMN IF NOT EXISTS access_sources JSONB DEFAULT '[]'::jsonb`,
-      )
-      await this.db.query(
-        `ALTER TABLE map_analyses ADD COLUMN IF NOT EXISTS locality_sources JSONB DEFAULT '[]'::jsonb`,
-      )
-    } catch (err) {
-      this.logger.error(`Mapping setup failed: ${(err as Error).message}`)
-    }
-  }
+
 
   private async project(projectId: string): Promise<Row | null> {
     const r = await this.db.query(`SELECT * FROM projects WHERE project_id = $1`, [projectId.trim()])

@@ -3,6 +3,7 @@ import { AiService } from '../ai/ai.service'
 import { DatabaseService } from '../database/database.service'
 import { CHATBOT_KNOWLEDGE, KnowledgeSection } from './chatbot.knowledge'
 import { ChatDto } from './dto/chat.dto'
+import type { AuthUser } from '../../Home_Pages/auth/types/auth-user'
 
 const words = (value: string): string[] => Array.from(value.toLowerCase().match(/[a-z0-9\u0D80-\u0DFF]+/g) ?? [])
 
@@ -27,16 +28,10 @@ export class ChatbotService {
       .map(({ section }) => section)
   }
 
-  async chat(dto: ChatDto) {
+  async chat(dto: ChatDto, user: AuthUser) {
     // Prefer the database role. During a temporary DB outage, keep the help
     // assistant usable with the validated role from the logged-in UI session.
-    let role = dto.role
-    try {
-      const result = await this.db.query('SELECT role FROM users WHERE user_id = $1 LIMIT 1', [dto.userId.trim()])
-      if (result.rowCount) role = String(result.rows[0].role)
-    } catch (error) {
-      this.logger.warn(`Role lookup unavailable; using validated session role: ${(error as Error).message}`)
-    }
+    const role = user.role
     const sources = this.retrieve(dto.message, role)
     const context = sources.map((source, index) => `[${index + 1}] ${source.title}\n${source.content}`).join('\n\n')
 

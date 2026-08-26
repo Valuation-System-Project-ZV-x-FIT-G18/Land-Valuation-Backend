@@ -1,13 +1,14 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 import { inspectionFields } from './inspection-fields'
 import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
+import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 // Site inspection reports. The technical officer uploads the handwritten form;
 // we OCR it into a draft they can edit, then save the final data.
 @Injectable()
-export class InspectionsService implements OnModuleInit {
+export class InspectionsService {
   private readonly logger = new Logger(InspectionsService.name)
 
   constructor(
@@ -16,29 +17,16 @@ export class InspectionsService implements OnModuleInit {
     private readonly storage: ObjectStorageService,
   ) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(
-        `CREATE TABLE IF NOT EXISTS inspections (
-           id         SERIAL PRIMARY KEY,
-           project_id VARCHAR(20) NOT NULL,
-           to_id      VARCHAR(20) NOT NULL DEFAULT '',
-           data       JSONB       NOT NULL DEFAULT '{}',
-           status     VARCHAR(30) NOT NULL DEFAULT 'Completed',
-           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-           UNIQUE (project_id)
-         )`,
-      )
-      await this.db.query(`CREATE TABLE IF NOT EXISTS inspection_files (
-        project_id VARCHAR(20) PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
-        file_name VARCHAR(255) NOT NULL, file_mime VARCHAR(100) NOT NULL DEFAULT '',
-        file_data BYTEA, object_key VARCHAR(1024) NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`)
-      await this.db.query(`ALTER TABLE inspection_files ALTER COLUMN file_data DROP NOT NULL`)
-      await this.db.query(`ALTER TABLE inspection_files ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
-    } catch (err) {
-      this.logger.error(`Inspections setup failed: ${(err as Error).message}`)
-    }
+  async assertAssigned(projectId: string, user: AuthUser) {
+    if (user.role !== 'Technical Officer') throw new ForbiddenException('Only a technical officer can edit inspection data.')
+    const result = await this.db.query(
+      `SELECT 1 FROM valuations WHERE project_id = $1 AND technical_officer_id = $2 LIMIT 1`,
+      [(projectId ?? '').trim(), user.userId],
+    )
+    if (!result.rowCount) throw new ForbiddenException('This project is not assigned to you.')
   }
+
+
 
   // Run OCR on the uploaded file and parse it into draft fields.
   async ocr(projectId: string, file: Express.Multer.File) {
@@ -115,6 +103,31 @@ export class InspectionsService implements OnModuleInit {
     'Inspection Details',
   ]
 
+  // Indices of the longest strictly increasing subsequence of `orders`.
+  //
+  // `orders` is the printed position of each label, listed in the order the
+  // labels were actually found in the OCR text. Anything outside the longest
+  // increasing run is a label that matched in the wrong place. n is ~43, so the
+  // straightforward quadratic version is both fast enough and easy to check.
+  private longestOrderedRun(orders: number[]): Set<number> {
+    if (orders.length === 0) return new Set()
+    const length = orders.map(() => 1)
+    const previous = orders.map(() => -1)
+    let best = 0
+    for (let i = 0; i < orders.length; i++) {
+      for (let j = 0; j < i; j++) {
+        if (orders[j] < orders[i] && length[j] + 1 > length[i]) {
+          length[i] = length[j] + 1
+          previous[i] = j
+        }
+      }
+      if (length[i] > length[best]) best = i
+    }
+    const keep = new Set<number>()
+    for (let i = best; i !== -1; i = previous[i]) keep.add(i)
+    return keep
+  }
+
   // Best-effort parse: locate each printed label in the OCR text, then take the
   // text between that label and the next label/section heading as its value.
   // This tolerates values that wrap onto the next line (common with OCR).
@@ -123,27 +136,47 @@ export class InspectionsService implements OnModuleInit {
     const flatLower = flat.toLowerCase()
 
     const anchors = [
-      ...this.sectionTitles.map((t) => ({ key: '', label: t })),
-      ...inspectionFields.map((f) => ({ key: f.key, label: f.label })),
+      // order = position on the printed form. Section headings are only
+      // boundaries, so they are exempt from the ordering check below.
+      ...this.sectionTitles.map((t) => ({ key: '', label: t, order: -1 })),
+      ...inspectionFields.map((f, index) => ({ key: f.key, label: f.label, order: index })),
     ]
 
     // Find where each label appears (flexible on punctuation/spacing). Section
     // headings also swallow their leading number (e.g. "6. Valuation Figures")
     // so it doesn't leak into the previous field's value.
-    const found: { key: string; start: number; end: number }[] = []
+    const found: { key: string; start: number; end: number; order: number }[] = []
     for (const a of anchors) {
       const core = a.label.toLowerCase().replace(/[^a-z0-9]+/g, '[^a-z0-9]+')
       const pattern = a.key === '' ? `\\d{0,2}[^a-z0-9]{0,4}${core}` : core
       const m = new RegExp(pattern, 'i').exec(flatLower)
-      if (m) found.push({ key: a.key, start: m.index, end: m.index + m[0].length })
+      if (m) found.push({ key: a.key, start: m.index, end: m.index + m[0].length, order: a.order })
     }
     found.sort((x, y) => x.start - y.start)
 
+    // Only the FIRST occurrence of each label is matched, so a label whose
+    // words also appear earlier (in a heading, in the printed instructions, or
+    // inside someone's handwriting) anchors in the wrong place. Because each
+    // value is the text BETWEEN two anchors, one bad anchor corrupts its
+    // neighbour's value too.
+    //
+    // The printed form has a fixed field order, so anchors must appear in that
+    // order. Keep the largest run that does, and drop the rest: a field left
+    // blank for the officer to type is far better than a confidently wrong one.
+    const fieldAnchors = found.filter((f) => f.key)
+    const keep = this.longestOrderedRun(fieldAnchors.map((f) => f.order))
+    const dropped = fieldAnchors.filter((_, i) => !keep.has(i)).map((f) => f.key)
+    if (dropped.length) {
+      this.logger.warn(`OCR: ignored ${dropped.length} out-of-order label(s): ${dropped.join(', ')}`)
+    }
+    const kept = new Set(fieldAnchors.filter((_, i) => keep.has(i)))
+    const ordered = found.filter((f) => !f.key || kept.has(f))
+
     const out: Record<string, string> = {}
-    for (let i = 0; i < found.length; i++) {
-      const cur = found[i]
+    for (let i = 0; i < ordered.length; i++) {
+      const cur = ordered[i]
       if (!cur.key) continue // section heading, just a boundary
-      const nextStart = found[i + 1]?.start ?? flat.length
+      const nextStart = ordered[i + 1]?.start ?? flat.length
       let value = flat
         .slice(cur.end, nextStart)
         .replace(/^[\s:._–-]+/, '') // leading colon / underscores / dashes

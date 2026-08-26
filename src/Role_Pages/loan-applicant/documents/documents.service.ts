@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { NotificationsService } from '../../../Common_Pages/notifications/notifications.service'
 import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
@@ -8,7 +8,7 @@ import { ObjectStorageService } from '../../../Common_Pages/storage/object-stora
 // file. Scoped by project so an applicant with more than one project keeps a
 // separate document set for each.
 @Injectable()
-export class DocumentsService implements OnModuleInit {
+export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name)
 
   constructor(
@@ -17,49 +17,7 @@ export class DocumentsService implements OnModuleInit {
     private readonly storage: ObjectStorageService,
   ) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(
-        `CREATE TABLE IF NOT EXISTS applicant_documents (
-           id            SERIAL PRIMARY KEY,
-           applicant_nic VARCHAR(20)  NOT NULL,
-           doc_type      VARCHAR(60)  NOT NULL,
-           file_name     VARCHAR(255) NOT NULL DEFAULT '',
-           file_path     VARCHAR(255) NOT NULL DEFAULT '',
-           status        VARCHAR(30)  NOT NULL DEFAULT 'Submitted',
-           created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
-           UNIQUE (applicant_nic, doc_type)
-         )`,
-      )
-      await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS project_id VARCHAR(20) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS file_data BYTEA`)
-      await this.db.query(`ALTER TABLE applicant_documents ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
-      // Existing rows predate per-project documents — attach them to that
-      // applicant's earliest project so nothing already uploaded is lost.
-      await this.db.query(
-        `UPDATE applicant_documents ad SET project_id = COALESCE((
-           SELECT project_id FROM projects WHERE applicant_nic = ad.applicant_nic
-            ORDER BY created_at ASC LIMIT 1), '')
-          WHERE ad.project_id = ''`,
-      )
-      // The old (applicant_nic, doc_type) constraint would block two projects
-      // having the same document type — replace it with a per-project one.
-      await this.db.query(
-        `ALTER TABLE applicant_documents DROP CONSTRAINT IF EXISTS applicant_documents_applicant_nic_doc_type_key`,
-      )
-      await this.db.query(`
-        DO $$ BEGIN
-          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'applicant_documents_nic_project_doc_key') THEN
-            ALTER TABLE applicant_documents ADD CONSTRAINT applicant_documents_nic_project_doc_key
-              UNIQUE (applicant_nic, project_id, doc_type);
-          END IF;
-        END $$`,
-      )
-    } catch (err) {
-      this.logger.error(`Applicant documents setup failed: ${(err as Error).message}`)
-    }
-  }
+
 
   // The documents this applicant has uploaded so far for one project.
   async list(nic: string, projectId: string) {

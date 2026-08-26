@@ -5,6 +5,7 @@ import {
   Post,
   Put,
   Query,
+  Req,
   Res,
   UploadedFile,
   UseInterceptors,
@@ -12,6 +13,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express'
 import { memoryStorage } from 'multer'
 import type { Response } from 'express'
+import type { Request } from 'express'
 import { AuthService } from './auth.service'
 import { UsersService } from './users.service'
 import { LoginDto } from './dto/login.dto'
@@ -32,8 +34,26 @@ export class AuthController {
   // POST /api/auth/login
   @Post('login')
   @Public()
-  async login(@Body() dto: LoginDto) {
-    return { ok: true, ...(await this.authService.login(dto)) }
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) response: Response) {
+    const result = await this.authService.login(dto)
+    this.setRefreshCookie(response, result.refreshToken)
+    return { ok: true, user: result.user, accessToken: result.accessToken }
+  }
+
+  @Post('refresh')
+  @Public()
+  async refresh(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
+    const token = this.readCookie(request, 'refresh_token')
+    const result = await this.authService.refresh(token)
+    this.setRefreshCookie(response, result.refreshToken)
+    return { ok: true, accessToken: result.accessToken }
+  }
+
+  @Post('logout')
+  async logout(@CurrentUser() user: AuthUser, @Res({ passthrough: true }) response: Response) {
+    await this.authService.logout(user.userId)
+    response.clearCookie('refresh_token', { path: '/api/auth' })
+    return { ok: true }
   }
 
   // POST /api/auth/forgot-password { email }
@@ -83,13 +103,33 @@ export class AuthController {
     return { ok: true, photoPath: token }
   }
 
-  // GET /api/auth/avatar?userId=... — serve the stored profile picture from the database.
+  // GET /api/auth/avatar?userId=... — serve the stored profile picture from the
+  // database. Signed-in only: profile pictures are staff directory data, and a
+  // public version let anyone read every user's photo by guessing ids.
   @Get('avatar')
-  @Public()
   async avatar(@Query('userId') userId: string, @Res() res: Response) {
     const photo = await this.users.getPhoto(userId ?? '')
     if (!photo) { res.status(404).json({ error: 'No profile picture set.' }); return }
     res.set('Content-Type', photo.mime)
     res.send(photo.data)
+  }
+
+  private setRefreshCookie(response: Response, token: string) {
+    response.cookie('refresh_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/api/auth',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    })
+  }
+
+  private readCookie(request: Request, name: string) {
+    const value = request.headers.cookie
+      ?.split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(`${name}=`))
+      ?.slice(name.length + 1)
+    return value ? decodeURIComponent(value) : ''
   }
 }

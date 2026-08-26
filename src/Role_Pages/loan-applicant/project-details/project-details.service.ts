@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
 
@@ -12,71 +12,12 @@ type Row = Record<string, unknown>
 // that project is actually created, so the same draft never gets silently
 // reused for an unrelated second project.
 @Injectable()
-export class ProjectDetailsService implements OnModuleInit {
+export class ProjectDetailsService {
   private readonly logger = new Logger(ProjectDetailsService.name)
 
   constructor(private readonly db: DatabaseService, private readonly storage: ObjectStorageService) {}
 
-  async onModuleInit() {
-    try {
-      // Fresh install: create with the current (list) shape directly.
-      await this.db.query(
-        `CREATE TABLE IF NOT EXISTS applicant_project_details (
-           id             SERIAL       PRIMARY KEY,
-           applicant_nic  VARCHAR(20)  NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-           label          VARCHAR(100) NOT NULL DEFAULT '',
-           status         VARCHAR(20)  NOT NULL DEFAULT 'Pending',
-           data           JSONB        NOT NULL DEFAULT '{}'::jsonb,
-           created_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
-           updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
-         )`,
-      )
-      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS file_data BYTEA`)
-      await this.db.query(`ALTER TABLE applicant_project_detail_files ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
-      // Migration: an earlier version of this table had applicant_nic as the
-      // PRIMARY KEY (one draft per applicant). Move to a proper id PK so an
-      // applicant can have several drafts; safe/idempotent to re-run.
-      await this.db.query(`ALTER TABLE applicant_project_details ADD COLUMN IF NOT EXISTS id SERIAL`)
-      await this.db.query(`ALTER TABLE applicant_project_details ADD COLUMN IF NOT EXISTS label VARCHAR(100) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE applicant_project_details ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'Pending'`)
-      await this.db.query(`ALTER TABLE applicant_project_details ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
-      // Only replace the legacy NIC primary key. Do not drop the current id
-      // primary key because draft-file foreign keys depend on it.
-      await this.db.query(`
-        DO $$ BEGIN
-          IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint c
-            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-            WHERE c.conrelid = 'applicant_project_details'::regclass
-              AND c.contype = 'p' AND a.attname = 'id'
-          ) THEN
-            ALTER TABLE applicant_project_details DROP CONSTRAINT IF EXISTS applicant_project_details_pkey CASCADE;
-            ALTER TABLE applicant_project_details ADD CONSTRAINT applicant_project_details_pkey PRIMARY KEY (id);
-          END IF;
-        END $$`)
-      await this.db.query(
-        `CREATE INDEX IF NOT EXISTS applicant_project_details_nic_idx ON applicant_project_details (applicant_nic)`,
-      )
 
-      // Documents attached to a draft (the same upload slots as the
-      // coordinator's Create Project form — survey plan, title deed, etc.).
-      // One file per (draft, doc type); re-uploading replaces it.
-      await this.db.query(
-        `CREATE TABLE IF NOT EXISTS applicant_project_detail_files (
-           id         SERIAL       PRIMARY KEY,
-           draft_id   INTEGER      NOT NULL REFERENCES applicant_project_details(id) ON DELETE CASCADE,
-           doc_type   VARCHAR(60)  NOT NULL,
-           file_name  VARCHAR(255) NOT NULL DEFAULT '',
-           file_path  VARCHAR(255) NOT NULL DEFAULT '',
-           created_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
-           UNIQUE (draft_id, doc_type)
-         )`,
-      )
-    } catch (err) {
-      this.logger.error(`Applicant project details setup failed: ${(err as Error).message}`)
-    }
-  }
 
   private toDraft(r: Row) {
     return {
@@ -187,12 +128,14 @@ export class ProjectDetailsService implements OnModuleInit {
 
   // The stored file for one of a draft's documents (for download by the
   // applicant or the coordinator reviewing it).
-  async attachment(draftId: number, docType: string) {
+  async attachment(draftId: number, docType: string, applicantNic: string) {
     if (!Number.isInteger(draftId)) return null
     const r = await this.db.query(
-      `SELECT file_name, file_mime, object_key FROM applicant_project_detail_files
-        WHERE draft_id = $1 AND doc_type = $2`,
-      [draftId, (docType ?? '').trim()],
+      `SELECT f.file_name, f.file_mime, f.object_key
+         FROM applicant_project_detail_files f
+         JOIN applicant_project_details d ON d.id = f.draft_id
+        WHERE f.draft_id = $1 AND f.doc_type = $2 AND d.applicant_nic = $3`,
+      [draftId, (docType ?? '').trim(), applicantNic.trim()],
     )
     const f = r.rows[0]
     if (!f?.object_key) return null

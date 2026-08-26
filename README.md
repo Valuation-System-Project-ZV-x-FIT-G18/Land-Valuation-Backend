@@ -111,8 +111,8 @@ npm install
 
 # 2. Create a file named  .env  in this folder (see the example below)
 
-# 3. Create the database tables (run this once)
-psql "<your DATABASE_URL>" -f schema.sql
+# 3. Apply every pending database migration
+npm run db:migrate
 
 # 4. Create the first Admin login
 node seed-admin.mjs
@@ -179,7 +179,7 @@ OCR_SPACE_API_KEY=your-ocr-key
 After running `node seed-admin.mjs`, open the **internal login** page and sign in as **Admin**. The default password for the sample accounts is:
 
 ```
-Test@123
+Test@1234
 ```
 
 Use the **Admin** account to create the other staff logins (Coordinator, Technical Officer, Managers, Bank).
@@ -194,6 +194,11 @@ Use the **Admin** account to create the other staff logins (Coordinator, Technic
 | `npm run start:dev` | Run the backend with auto-reload (development) |
 | `npm run build` | Build the backend for production |
 | `npm run start:prod` | Run the built backend |
+| `npm run db:migrate` | Apply pending database migrations safely |
+| `npm run db:check` | Verify the live database structure |
+| `npm run db:seed` | Create the development admin account |
+| `npm run db:wipe` | Remove all application data but keep the schema |
+| `npm run db:reset` | Rebuild the database schema (destructive) |
 
 **Frontend** (`Land-Valuation-Frontend`)
 | Command | What it does |

@@ -1,13 +1,14 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common'
 import { DatabaseService } from '../../../Common_Pages/database/database.service'
 import { AiService } from '../../../Common_Pages/ai/ai.service'
 import { ObjectStorageService } from '../../../Common_Pages/storage/object-storage.service'
+import type { AuthUser } from '../../../Home_Pages/auth/types/auth-user'
 
 // Site photographs a technical officer uploads per project. One row per
 // (project, photo type); re-uploading replaces the previous photo. For the main
 // photo categories, a very short AI caption is generated from the image.
 @Injectable()
-export class SitePhotosService implements OnModuleInit {
+export class SitePhotosService {
   private readonly logger = new Logger(SitePhotosService.name)
 
   constructor(
@@ -16,28 +17,22 @@ export class SitePhotosService implements OnModuleInit {
     private readonly storage: ObjectStorageService,
   ) {}
 
-  async onModuleInit() {
-    try {
-      await this.db.query(
-        `CREATE TABLE IF NOT EXISTS site_photos (
-           id         SERIAL PRIMARY KEY,
-           project_id VARCHAR(20)  NOT NULL,
-           to_id      VARCHAR(20)  NOT NULL DEFAULT '',
-           photo_type VARCHAR(60)  NOT NULL,
-           file_name  VARCHAR(255) NOT NULL DEFAULT '',
-           file_path  VARCHAR(255) NOT NULL DEFAULT '',
-           created_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
-           UNIQUE (project_id, photo_type)
-         )`,
-      )
-      await this.db.query(`ALTER TABLE site_photos ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE site_photos ADD COLUMN IF NOT EXISTS file_mime VARCHAR(100) NOT NULL DEFAULT ''`)
-      await this.db.query(`ALTER TABLE site_photos ADD COLUMN IF NOT EXISTS file_data BYTEA`)
-      await this.db.query(`ALTER TABLE site_photos ADD COLUMN IF NOT EXISTS object_key VARCHAR(1024) NOT NULL DEFAULT ''`)
-    } catch (err) {
-      this.logger.error(`Site photos setup failed: ${(err as Error).message}`)
-    }
+  async assertReadable(projectId: string, user: AuthUser) {
+    if (['Admin', 'Coordinator', 'Manager L1', 'Manager L2', 'Manager L3'].includes(user.role)) return
+    if (user.role !== 'Technical Officer') throw new ForbiddenException('You cannot access these project photographs.')
+    const result = await this.db.query(
+      `SELECT 1 FROM valuations WHERE project_id = $1 AND technical_officer_id = $2 LIMIT 1`,
+      [(projectId ?? '').trim(), user.userId],
+    )
+    if (!result.rowCount) throw new ForbiddenException('This project is not assigned to you.')
   }
+
+  async assertEditable(projectId: string, user: AuthUser) {
+    if (user.role !== 'Technical Officer') throw new ForbiddenException('Only a technical officer can upload site photographs.')
+    return this.assertReadable(projectId, user)
+  }
+
+
 
   async list(projectId: string) {
     const r = await this.db.query(
